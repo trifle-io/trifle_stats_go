@@ -17,6 +17,7 @@ type SQLiteDriver struct {
 	TableName       string
 	Separator        string
 	JoinedIdentifier JoinedIdentifier
+	SystemTracking   bool
 }
 
 // NewSQLiteDriver creates a new SQLite driver.
@@ -29,6 +30,7 @@ func NewSQLiteDriver(db *sql.DB, tableName string, joinedIdentifier JoinedIdenti
 		TableName:       tableName,
 		Separator:        "::",
 		JoinedIdentifier: joinedIdentifier,
+		SystemTracking:   true,
 	}
 }
 
@@ -207,6 +209,21 @@ func (d *SQLiteDriver) writeWithOperation(keys []Key, values map[string]any, op 
 		if err := d.batchWrite(tx, ident, packed, op); err != nil {
 			return err
 		}
+		if d.SystemTracking {
+			systemKey := Key{
+				Key:         systemKeyName,
+				Granularity: k.Granularity,
+				At:          k.At,
+			}
+			systemIdent, err := d.identifierForKey(systemKey)
+			if err != nil {
+				return err
+			}
+			systemData := systemDataFor(k.Key, 1)
+			if err := d.batchWrite(tx, systemIdent, systemData, "inc"); err != nil {
+				return err
+			}
+		}
 	}
 
 	return tx.Commit()
@@ -240,6 +257,17 @@ func (d *SQLiteDriver) batchWrite(tx *sql.Tx, ident identifier, packed map[strin
 		}
 	}
 	return nil
+}
+
+const systemKeyName = "__system__key__"
+
+func systemDataFor(key string, count int64) map[string]any {
+	return Pack(map[string]any{
+		"count": count,
+		"keys": map[string]any{
+			key: count,
+		},
+	})
 }
 
 func buildWriteQuery(table string, ident identifier, batch map[string]any, op string) (string, []any, error) {
