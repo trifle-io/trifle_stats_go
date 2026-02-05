@@ -219,7 +219,7 @@ func (d *SQLiteDriver) writeWithOperation(keys []Key, values map[string]any, op 
 			if err != nil {
 				return err
 			}
-			systemData := systemDataFor(k.Key, 1)
+			systemData := systemDataFor(k.SystemTrackingKey(), 1)
 			if err := d.batchWrite(tx, systemIdent, systemData, "inc"); err != nil {
 				return err
 			}

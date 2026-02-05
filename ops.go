@@ -11,19 +11,42 @@ type ValuesResult struct {
 	Values []map[string]any
 }
 
+const untrackedKeyName = "__untracked__"
+
+type trackOptions struct {
+	trackingKey string
+}
+
+// TrackOption configures Track/Assert behavior.
+type TrackOption func(*trackOptions)
+
+// Untracked routes system tracking to a shared "__untracked__" key.
+func Untracked() TrackOption {
+	return func(opts *trackOptions) {
+		opts.trackingKey = untrackedKeyName
+	}
+}
+
 // Track increments values across configured granularities.
-func Track(cfg *Config, key string, at time.Time, values map[string]any) error {
-	return trackOrAssert(cfg, key, at, values, "inc")
+func Track(cfg *Config, key string, at time.Time, values map[string]any, opts ...TrackOption) error {
+	return trackOrAssert(cfg, key, at, values, "inc", opts...)
 }
 
 // Assert sets values across configured granularities.
-func Assert(cfg *Config, key string, at time.Time, values map[string]any) error {
-	return trackOrAssert(cfg, key, at, values, "set")
+func Assert(cfg *Config, key string, at time.Time, values map[string]any, opts ...TrackOption) error {
+	return trackOrAssert(cfg, key, at, values, "set", opts...)
 }
 
-func trackOrAssert(cfg *Config, key string, at time.Time, values map[string]any, op string) error {
+func trackOrAssert(cfg *Config, key string, at time.Time, values map[string]any, op string, opts ...TrackOption) error {
 	if cfg == nil || cfg.Driver == nil {
 		return fmt.Errorf("config and driver required")
+	}
+
+	optState := trackOptions{}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(&optState)
+		}
 	}
 
 	granularities := cfg.EffectiveGranularities()
@@ -37,6 +60,7 @@ func trackOrAssert(cfg *Config, key string, at time.Time, values map[string]any,
 		floored := nocturnal.Floor(parser.Offset, parser.Unit)
 		keys = append(keys, Key{
 			Key:         key,
+			TrackingKey: optState.trackingKey,
 			Granularity: g,
 			At:          &floored,
 		})

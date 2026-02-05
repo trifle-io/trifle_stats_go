@@ -1,6 +1,7 @@
 package triflestats
 
 import (
+	"encoding/json"
 	"sort"
 	"strconv"
 	"time"
@@ -60,10 +61,49 @@ func normalizeValues(values []map[string]any) []map[string]any {
 		if row == nil {
 			out = append(out, map[string]any{})
 		} else {
-			out = append(out, row)
+			out = append(out, normalizeValueMap(row))
 		}
 	}
 	return out
+}
+
+func normalizeValueMap(value map[string]any) map[string]any {
+	out := make(map[string]any, len(value))
+	for key, entry := range value {
+		out[key] = normalizeValue(entry)
+	}
+	return out
+}
+
+func normalizeValue(value any) any {
+	switch node := value.(type) {
+	case map[string]any:
+		return normalizeValueMap(node)
+	case []any:
+		normalized := make([]any, 0, len(node))
+		for _, entry := range node {
+			normalized = append(normalized, normalizeValue(entry))
+		}
+		return normalized
+	case []map[string]any:
+		normalized := make([]map[string]any, 0, len(node))
+		for _, entry := range node {
+			normalized = append(normalized, normalizeValueMap(entry))
+		}
+		return normalized
+	case string:
+		if f, ok := parseNumericString(node); ok {
+			return f
+		}
+		return node
+	case float32, float64, json.Number:
+		if f, ok := toFloat(node); ok {
+			return f
+		}
+		return node
+	default:
+		return value
+	}
 }
 
 func flattenNumericPaths(value any, prefix string, out map[string]struct{}) {

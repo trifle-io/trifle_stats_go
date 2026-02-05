@@ -10,8 +10,17 @@ import (
 type Key struct {
 	Prefix      string
 	Key         string
+	TrackingKey string
 	Granularity string
 	At          *time.Time
+}
+
+// SystemTrackingKey returns the key used for system tracking.
+func (k Key) SystemTrackingKey() string {
+	if k.TrackingKey != "" {
+		return k.TrackingKey
+	}
+	return k.Key
 }
 
 // Join returns the full joined identifier (prefix, key, granularity, at unix).

@@ -1,6 +1,7 @@
 package triflestats
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
@@ -27,6 +28,40 @@ func TestSeriesAvailablePaths(t *testing.T) {
 	expect := []string{"count", "country.US", "meta.duration"}
 	if !reflect.DeepEqual(got, expect) {
 		t.Fatalf("expected %v, got %v", expect, got)
+	}
+}
+
+func TestSeriesNormalizesNumericStrings(t *testing.T) {
+	series := NewSeries(nil, []map[string]any{
+		{
+			"sum":   "108451730347.56950000000010",
+			"count": json.Number("12"),
+			"nested": map[string]any{
+				"value": "3.5",
+			},
+			"label": "ok",
+		},
+	})
+
+	if _, ok := series.Values[0]["sum"].(string); ok {
+		t.Fatalf("expected sum to be normalized to numeric value")
+	}
+	if _, ok := toFloat(series.Values[0]["sum"]); !ok {
+		t.Fatalf("expected sum to be numeric")
+	}
+
+	nested, ok := series.Values[0]["nested"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected nested map")
+	}
+	if _, ok := nested["value"].(string); ok {
+		t.Fatalf("expected nested value to be normalized to numeric value")
+	}
+	if _, ok := toFloat(nested["value"]); !ok {
+		t.Fatalf("expected nested value to be numeric")
+	}
+	if _, ok := series.Values[0]["label"].(string); !ok {
+		t.Fatalf("expected label to remain string")
 	}
 }
 

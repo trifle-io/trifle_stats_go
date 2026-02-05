@@ -3,6 +3,8 @@ package triflestats
 import (
 	"encoding/json"
 	"math"
+	"strconv"
+	"strings"
 )
 
 func toFloat(value any) (float64, bool) {
@@ -45,8 +47,27 @@ func toFloat(value any) (float64, bool) {
 			}
 			return f, true
 		}
+	case string:
+		if f, ok := parseNumericString(v); ok {
+			return f, true
+		}
 	}
 	return 0, false
+}
+
+func parseNumericString(value string) (float64, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(trimmed, 64)
+	if err != nil {
+		return 0, false
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0, false
+	}
+	return f, true
 }
 
 // NormalizeNumeric returns a float64 for numeric inputs or nil otherwise.
