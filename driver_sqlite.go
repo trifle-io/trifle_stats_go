@@ -13,8 +13,8 @@ import (
 
 // SQLiteDriver implements the Driver interface using SQLite JSON1.
 type SQLiteDriver struct {
-	DB              *sql.DB
-	TableName       string
+	DB               *sql.DB
+	TableName        string
 	Separator        string
 	JoinedIdentifier JoinedIdentifier
 	SystemTracking   bool
@@ -26,8 +26,8 @@ func NewSQLiteDriver(db *sql.DB, tableName string, joinedIdentifier JoinedIdenti
 		tableName = "trifle_stats"
 	}
 	return &SQLiteDriver{
-		DB:              db,
-		TableName:       tableName,
+		DB:               db,
+		TableName:        tableName,
 		Separator:        "::",
 		JoinedIdentifier: joinedIdentifier,
 		SystemTracking:   true,
