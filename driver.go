@@ -30,3 +30,16 @@ type Driver interface {
 	Get(keys []Key) ([]map[string]any, error)
 	Description() string
 }
+
+// WriteStorage represents the write contract used by Track/Assert.
+type WriteStorage interface {
+	Inc(keys []Key, values map[string]any) error
+	Set(keys []Key, values map[string]any) error
+}
+
+// CountDriver extends drivers with operation-count-aware writes, used by Buffer
+// to preserve system tracking counts when multiple operations are aggregated.
+type CountDriver interface {
+	IncCount(keys []Key, values map[string]any, count int64) error
+	SetCount(keys []Key, values map[string]any, count int64) error
+}

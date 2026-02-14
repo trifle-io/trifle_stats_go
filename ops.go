@@ -38,8 +38,12 @@ func Assert(cfg *Config, key string, at time.Time, values map[string]any, opts .
 }
 
 func trackOrAssert(cfg *Config, key string, at time.Time, values map[string]any, op string, opts ...TrackOption) error {
-	if cfg == nil || cfg.Driver == nil {
-		return fmt.Errorf("config and driver required")
+	if cfg == nil {
+		return fmt.Errorf("config required")
+	}
+	storage := cfg.Storage()
+	if storage == nil {
+		return fmt.Errorf("config driver required")
 	}
 
 	optState := trackOptions{}
@@ -68,9 +72,9 @@ func trackOrAssert(cfg *Config, key string, at time.Time, values map[string]any,
 
 	switch op {
 	case "inc":
-		return cfg.Driver.Inc(keys, values)
+		return storage.Inc(keys, values)
 	case "set":
-		return cfg.Driver.Set(keys, values)
+		return storage.Set(keys, values)
 	default:
 		return fmt.Errorf("invalid op")
 	}

@@ -22,6 +22,22 @@ func TestSQLiteDriver_Separated(t *testing.T) {
 	runSQLiteDriverModeTest(t, JoinedSeparated)
 }
 
+func TestSQLiteDriver_Description(t *testing.T) {
+	db := newTestDB(t)
+	full := NewSQLiteDriver(db, "stats", JoinedFull)
+	if got := full.Description(); got != "SQLiteDriver(J)" {
+		t.Fatalf("unexpected full description: %s", got)
+	}
+	partial := NewSQLiteDriver(db, "stats", JoinedPartial)
+	if got := partial.Description(); got != "SQLiteDriver(P)" {
+		t.Fatalf("unexpected partial description: %s", got)
+	}
+	separated := NewSQLiteDriver(db, "stats", JoinedSeparated)
+	if got := separated.Description(); got != "SQLiteDriver(S)" {
+		t.Fatalf("unexpected separated description: %s", got)
+	}
+}
+
 func runSQLiteDriverModeTest(t *testing.T, mode JoinedIdentifier) {
 	db := newTestDB(t)
 	driver := NewSQLiteDriver(db, "trifle_stats", mode)
@@ -110,8 +126,8 @@ func TestSQLiteDriver_SystemTracking(t *testing.T) {
 			at := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
 			key := Key{Key: "event::logs", Granularity: "1h", At: &at}
 
-			if err := driver.Inc([]Key{key}, map[string]any{"count": 1}); err != nil {
-				t.Fatalf("inc failed: %v", err)
+			if err := driver.IncCount([]Key{key}, map[string]any{"count": 1}, 3); err != nil {
+				t.Fatalf("inc count failed: %v", err)
 			}
 
 			systemKey := Key{Key: systemKeyName, Granularity: "1h", At: &at}
@@ -123,9 +139,9 @@ func TestSQLiteDriver_SystemTracking(t *testing.T) {
 				t.Fatalf("expected 1 system result, got %d", len(got))
 			}
 			expect := map[string]any{
-				"count": float64(1),
+				"count": float64(3),
 				"keys": map[string]any{
-					"event::logs": float64(1),
+					"event::logs": float64(3),
 				},
 			}
 			if !reflect.DeepEqual(got[0], expect) {

@@ -1,13 +1,20 @@
-# trifle_stats_go (MVP)
+# trifle_stats_go
 
-Minimal Go implementation of Trifle Stats core functionality for local SQLite usage.
+Go implementation of Trifle Stats for time-series metrics with pluggable storage drivers.
 
-## Scope (MVP)
+## Features
 - Nocturnal time bucketing (`floor`, `add`, `timeline`)
-- Key/identifier generation (full/partial/separated)
+- Key/identifier generation (`JoinedFull`, `JoinedPartial`, `JoinedSeparated`)
 - Packer (dot-notation pack/unpack)
-- SQLite driver with JSON1 (`inc`, `set`, `get`)
+- Drivers:
+  - SQLite (`modernc.org/sqlite`)
+  - PostgreSQL (`database/sql` with `pgx`)
+  - MySQL (`database/sql` with `go-sql-driver/mysql`)
+  - Redis (`go-redis/v9`)
+  - MongoDB (`mongo-driver`)
 - Operations: `Track`, `Assert`, `Values`
+- Buffered writes with configurable size/duration/aggregation
+- System tracking for per-key write counters (including `Untracked()`)
 
 ## Install
 ```bash
@@ -32,16 +39,70 @@ result, _ := triflestats.Values(cfg, "event::logs", time.Now().Add(-24*time.Hour
 _ = result
 ```
 
+## Driver Setup
+
+### SQLite
+```go
+db, _ := sql.Open("sqlite", "file:stats.db?cache=shared&mode=rwc")
+driver := triflestats.NewSQLiteDriver(db, "trifle_stats", triflestats.JoinedFull)
+_ = driver.Setup()
+```
+
+### PostgreSQL
+```go
+db, _ := sql.Open("pgx", "postgres://postgres:password@localhost:5432/postgres?sslmode=disable")
+driver := triflestats.NewPostgresDriver(db, "trifle_stats", triflestats.JoinedSeparated)
+_ = driver.Setup()
+```
+
+### MySQL
+```go
+db, _ := sql.Open("mysql", "root:password@tcp(127.0.0.1:3306)/trifle_stats?parseTime=true&loc=UTC")
+driver := triflestats.NewMySQLDriver(db, "trifle_stats", triflestats.JoinedSeparated)
+_ = driver.Setup()
+```
+
+### Redis
+```go
+client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+driver := triflestats.NewRedisDriver(client, "trfl")
+```
+
+### MongoDB
+```go
+client, _ := mongo.Connect(context.Background(), options.Client().ApplyURI("mongodb://localhost:27017"))
+collection := client.Database("metrics").Collection("trifle_stats")
+
+driver := triflestats.NewMongoDriver(collection, triflestats.JoinedSeparated)
+driver.ExpireAfter = 24 * time.Hour
+_ = driver.Setup(context.Background())
+```
+
 ## Identifier Modes
 - `JoinedFull` => `key` (prefix + key + granularity + unix)
 - `JoinedPartial` => `key` + `at`
 - `JoinedSeparated` => `key` + `granularity` + `at`
 
+## Buffering
+
+`DefaultConfig()` enables buffered writes by default. You can tune or disable buffering:
+
+```go
+cfg := triflestats.DefaultConfig()
+cfg.Driver = driver
+
+cfg.BufferEnabled = true
+cfg.BufferDuration = 1 * time.Second
+cfg.BufferSize = 256
+cfg.BufferAggregate = true
+cfg.BufferAsync = true
+
+// Optional lifecycle controls:
+_ = cfg.FlushBuffer()
+_ = cfg.ShutdownBuffer()
+```
+
 ## Tests
 ```bash
 go test ./...
 ```
-
-## Notes
-- SQLite uses JSON1 with batched `json_set` updates (avoids parser depth limits).
-- Buffering and other drivers are intentionally omitted in MVP.

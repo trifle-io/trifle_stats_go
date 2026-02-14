@@ -43,3 +43,25 @@ func TestKeyIdentifierModes(t *testing.T) {
 		t.Fatalf("separated identifier mismatch: %+v", separated)
 	}
 }
+
+func TestParseJoinedIdentifier(t *testing.T) {
+	tests := []struct {
+		input  string
+		expect JoinedIdentifier
+	}{
+		{input: "full", expect: JoinedFull},
+		{input: "FULL", expect: JoinedFull},
+		{input: "partial", expect: JoinedPartial},
+		{input: "PARTIAL", expect: JoinedPartial},
+		{input: "separated", expect: JoinedSeparated},
+		{input: "SEPARATED", expect: JoinedSeparated},
+		{input: "", expect: JoinedSeparated},
+		{input: "unknown", expect: JoinedFull},
+	}
+
+	for _, tt := range tests {
+		if got := ParseJoinedIdentifier(tt.input); got != tt.expect {
+			t.Fatalf("expected %v for input %q, got %v", tt.expect, tt.input, got)
+		}
+	}
+}

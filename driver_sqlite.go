@@ -70,12 +70,28 @@ func (d *SQLiteDriver) Description() string {
 
 // Inc increments numeric values in-place.
 func (d *SQLiteDriver) Inc(keys []Key, values map[string]any) error {
-	return d.writeWithOperation(keys, values, "inc")
+	return d.IncCount(keys, values, 1)
+}
+
+// IncCount increments values and records system tracking count.
+func (d *SQLiteDriver) IncCount(keys []Key, values map[string]any, count int64) error {
+	if count <= 0 {
+		count = 1
+	}
+	return d.writeWithOperation(keys, values, "inc", count)
 }
 
 // Set sets provided values (without deleting other keys).
 func (d *SQLiteDriver) Set(keys []Key, values map[string]any) error {
-	return d.writeWithOperation(keys, values, "set")
+	return d.SetCount(keys, values, 1)
+}
+
+// SetCount sets values and records system tracking count.
+func (d *SQLiteDriver) SetCount(keys []Key, values map[string]any, count int64) error {
+	if count <= 0 {
+		count = 1
+	}
+	return d.writeWithOperation(keys, values, "set", count)
 }
 
 // Get fetches values for keys in order.
@@ -180,7 +196,7 @@ func (d *SQLiteDriver) identifierForKey(k Key) (identifier, error) {
 	}
 }
 
-func (d *SQLiteDriver) writeWithOperation(keys []Key, values map[string]any, op string) error {
+func (d *SQLiteDriver) writeWithOperation(keys []Key, values map[string]any, op string, count int64) error {
 	if len(keys) == 0 {
 		return nil
 	}
@@ -206,25 +222,25 @@ func (d *SQLiteDriver) writeWithOperation(keys []Key, values map[string]any, op 
 		if err != nil {
 			return err
 		}
-		if err := d.batchWrite(tx, ident, packed, op); err != nil {
-			return err
-		}
-		if d.SystemTracking {
-			systemKey := Key{
+			if err := d.batchWrite(tx, ident, packed, op); err != nil {
+				return err
+			}
+			if d.SystemTracking {
+				systemKey := Key{
 				Key:         systemKeyName,
 				Granularity: k.Granularity,
 				At:          k.At,
 			}
 			systemIdent, err := d.identifierForKey(systemKey)
-			if err != nil {
-				return err
-			}
-			systemData := systemDataFor(k.SystemTrackingKey(), 1)
-			if err := d.batchWrite(tx, systemIdent, systemData, "inc"); err != nil {
-				return err
+				if err != nil {
+					return err
+				}
+				systemData := systemDataFor(k.SystemTrackingKey(), count)
+				if err := d.batchWrite(tx, systemIdent, systemData, "inc"); err != nil {
+					return err
+				}
 			}
 		}
-	}
 
 	return tx.Commit()
 }

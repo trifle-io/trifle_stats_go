@@ -1,6 +1,7 @@
 package triflestats
 
 import (
+	"sync"
 	"time"
 )
 
@@ -15,7 +16,16 @@ type Config struct {
 	Granularities     []string
 	Separator         string
 	JoinedIdentifier  JoinedIdentifier
+	BufferEnabled     bool
+	BufferDuration    time.Duration
+	BufferSize        int
+	BufferAggregate   bool
+	BufferAsync       bool
 	TimezoneLoadError error
+
+	bufferMu sync.Mutex
+	storage  WriteStorage
+	buffer   *Buffer
 }
 
 // DefaultConfig returns the default configuration.
@@ -26,6 +36,11 @@ func DefaultConfig() *Config {
 		Granularities:    nil, // nil means default list
 		Separator:        "::",
 		JoinedIdentifier: JoinedFull,
+		BufferEnabled:    true,
+		BufferDuration:   time.Second,
+		BufferSize:       256,
+		BufferAggregate:  true,
+		BufferAsync:      true,
 	}
 }
 
@@ -70,4 +85,79 @@ func (c *Config) EffectiveGranularities() []string {
 		out = append(out, g)
 	}
 	return out
+}
+
+// Storage returns the configured write storage backend (buffer or raw driver).
+func (c *Config) Storage() WriteStorage {
+	if c == nil {
+		return nil
+	}
+
+	c.bufferMu.Lock()
+	defer c.bufferMu.Unlock()
+
+	if !c.BufferEnabled {
+		c.shutdownBufferLocked()
+		return c.Driver
+	}
+	if c.Driver == nil {
+		c.shutdownBufferLocked()
+		return nil
+	}
+
+	if c.buffer != nil && c.buffer.matches(c.Driver, c.BufferDuration, c.BufferSize, c.BufferAggregate, c.BufferAsync) {
+		return c.storage
+	}
+
+	c.shutdownBufferLocked()
+	c.buffer = NewBuffer(c.Driver, BufferOptions{
+		Duration:  c.BufferDuration,
+		Size:      c.BufferSize,
+		Aggregate: c.BufferAggregate,
+		Async:     c.BufferAsync,
+	})
+	c.storage = c.buffer
+	return c.storage
+}
+
+// FlushBuffer flushes pending buffered actions.
+func (c *Config) FlushBuffer() error {
+	if c == nil {
+		return nil
+	}
+
+	c.bufferMu.Lock()
+	buffer := c.buffer
+	c.bufferMu.Unlock()
+	if buffer == nil {
+		return nil
+	}
+	return buffer.Flush()
+}
+
+// ShutdownBuffer flushes and stops the buffer worker.
+func (c *Config) ShutdownBuffer() error {
+	if c == nil {
+		return nil
+	}
+
+	c.bufferMu.Lock()
+	buffer := c.buffer
+	c.buffer = nil
+	c.storage = nil
+	c.bufferMu.Unlock()
+	if buffer == nil {
+		return nil
+	}
+	return buffer.Shutdown()
+}
+
+func (c *Config) shutdownBufferLocked() {
+	if c.buffer == nil {
+		c.storage = nil
+		return
+	}
+	_ = c.buffer.Shutdown()
+	c.buffer = nil
+	c.storage = nil
 }

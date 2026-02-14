@@ -16,6 +16,7 @@ func TestOpsTrackAssertValues(t *testing.T) {
 	cfg.Driver = driver
 	cfg.TimeZone = "UTC"
 	cfg.Granularities = []string{"1d"}
+	cfg.BufferEnabled = false
 
 	at := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
 

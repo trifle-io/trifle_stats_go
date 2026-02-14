@@ -12,6 +12,21 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: password
+          MYSQL_DATABASE: trifle_stats_test
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -ppassword"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 3306:3306
+    env:
+      MYSQL_DSN: root:password@tcp(127.0.0.1:3306)/trifle_stats_test?parseTime=true&loc=UTC
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -19,8 +34,15 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.24.x"
           cache: true
+
+      - name: Wait for MySQL
+        run: |
+          until timeout 1 bash -c "</dev/tcp/127.0.0.1/3306"; do
+            echo "Waiting for MySQL..."
+            sleep 2
+          done
 
       - name: Run tests
         run: go test ./...
