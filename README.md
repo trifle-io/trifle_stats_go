@@ -106,3 +106,9 @@ _ = cfg.ShutdownBuffer()
 ```bash
 go test ./...
 ```
+
+Live integration tests are enabled when these environment variables are set:
+- `POSTGRES_DSN`
+- `REDIS_ADDR`
+- `MONGODB_URI` (optional `MONGODB_DATABASE`, default `trifle_stats_test`)
+- `MYSQL_DSN`

@@ -13,6 +13,37 @@ jobs:
   test:
     runs-on: ubuntu-latest
     services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: password
+          POSTGRES_USER: postgres
+          POSTGRES_DB: trifle_stats_test
+        options: >-
+          --health-cmd "pg_isready -U postgres -d trifle_stats_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+      redis:
+        image: redis:7
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 6379:6379
+      mongo:
+        image: mongo:6
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 27017:27017
       mysql:
         image: mysql:8
         env:
@@ -26,6 +57,10 @@ jobs:
         ports:
           - 3306:3306
     env:
+      POSTGRES_DSN: postgres://postgres:password@127.0.0.1:5432/trifle_stats_test?sslmode=disable
+      REDIS_ADDR: 127.0.0.1:6379
+      MONGODB_URI: mongodb://127.0.0.1:27017
+      MONGODB_DATABASE: trifle_stats_test
       MYSQL_DSN: root:password@tcp(127.0.0.1:3306)/trifle_stats_test?parseTime=true&loc=UTC
     steps:
       - name: Checkout
@@ -37,11 +72,13 @@ jobs:
           go-version: "1.24.x"
           cache: true
 
-      - name: Wait for MySQL
+      - name: Wait for services
         run: |
-          until timeout 1 bash -c "</dev/tcp/127.0.0.1/3306"; do
-            echo "Waiting for MySQL..."
-            sleep 2
+          for port in 5432 6379 27017 3306; do
+            until timeout 1 bash -c "</dev/tcp/127.0.0.1/${port}"; do
+              echo "Waiting for service on port ${port}..."
+              sleep 2
+            done
           done
 
       - name: Run tests
