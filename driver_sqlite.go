@@ -222,25 +222,25 @@ func (d *SQLiteDriver) writeWithOperation(keys []Key, values map[string]any, op 
 		if err != nil {
 			return err
 		}
-			if err := d.batchWrite(tx, ident, packed, op); err != nil {
-				return err
-			}
-			if d.SystemTracking {
-				systemKey := Key{
+		if err := d.batchWrite(tx, ident, packed, op); err != nil {
+			return err
+		}
+		if d.SystemTracking {
+			systemKey := Key{
 				Key:         systemKeyName,
 				Granularity: k.Granularity,
 				At:          k.At,
 			}
 			systemIdent, err := d.identifierForKey(systemKey)
-				if err != nil {
-					return err
-				}
-				systemData := systemDataFor(k.SystemTrackingKey(), count)
-				if err := d.batchWrite(tx, systemIdent, systemData, "inc"); err != nil {
-					return err
-				}
+			if err != nil {
+				return err
+			}
+			systemData := systemDataFor(k.SystemTrackingKey(), count)
+			if err := d.batchWrite(tx, systemIdent, systemData, "inc"); err != nil {
+				return err
 			}
 		}
+	}
 
 	return tx.Commit()
 }
