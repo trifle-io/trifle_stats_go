@@ -91,6 +91,10 @@ cfg.BufferAggregate = true
 cfg.BufferAsync = true
 ```
 
+## Documentation
+
+Full guides, API reference, and examples at **[docs.trifle.io/trifle-stats-go](https://docs.trifle.io/trifle-stats-go)**
+
 ## Trifle Ecosystem
 
 Trifle Stats is the tracking layer. The ecosystem grows with you:
