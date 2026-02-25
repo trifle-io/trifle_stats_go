@@ -151,6 +151,35 @@ func TestSQLiteDriver_SystemTracking(t *testing.T) {
 	}
 }
 
+func TestSQLiteDriver_StoresRFC3339Timestamp(t *testing.T) {
+	db := newTestDB(t)
+	driver := NewSQLiteDriver(db, "trifle_stats", JoinedSeparated)
+	if err := driver.Setup(); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	loc := time.FixedZone("UTC+2", 2*60*60)
+	at := time.Date(2025, 1, 15, 10, 0, 0, 0, loc)
+	key := Key{Key: "event", Granularity: "1d", At: &at}
+
+	if err := driver.Set([]Key{key}, map[string]any{"count": 1}); err != nil {
+		t.Fatalf("set failed: %v", err)
+	}
+
+	var storedAt string
+	if err := db.QueryRow(
+		"SELECT at FROM trifle_stats WHERE key = ? AND granularity = ? LIMIT 1;",
+		"event",
+		"1d",
+	).Scan(&storedAt); err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+
+	if storedAt != at.UTC().Format(time.RFC3339) {
+		t.Fatalf("expected RFC3339 UTC timestamp, got %q", storedAt)
+	}
+}
+
 func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := fmt.Sprintf("file:memdb_%d?mode=memory&cache=shared", time.Now().UnixNano())

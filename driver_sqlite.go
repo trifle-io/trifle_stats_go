@@ -405,7 +405,7 @@ func scanRow(mode JoinedIdentifier, rows *sql.Rows) (string, string, error) {
 }
 
 func formatAt(t time.Time) string {
-	return t.Format("2006-01-02 15:04:05")
+	return t.UTC().Format(time.RFC3339)
 }
 
 func jsonPathForKey(key string) string {
