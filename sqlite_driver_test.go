@@ -180,6 +180,38 @@ func TestSQLiteDriver_StoresRFC3339Timestamp(t *testing.T) {
 	}
 }
 
+func TestSQLiteDriver_GetMatchesZeroMicrosecondRFC3339Variants(t *testing.T) {
+	db := newTestDB(t)
+	driver := NewSQLiteDriver(db, "trifle_stats", JoinedSeparated)
+	if err := driver.Setup(); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+
+	if _, err := db.Exec(
+		"INSERT INTO trifle_stats (key, granularity, at, data) VALUES (?, ?, ?, json(?));",
+		"event",
+		"1d",
+		"2025-01-15T10:00:00.000000Z",
+		`{"count":1}`,
+	); err != nil {
+		t.Fatalf("insert failed: %v", err)
+	}
+
+	at := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
+	key := Key{Key: "event", Granularity: "1d", At: &at}
+	got, err := driver.Get([]Key{key})
+	if err != nil {
+		t.Fatalf("get failed: %v", err)
+	}
+
+	if len(got) != 1 {
+		t.Fatalf("expected one row, got %d", len(got))
+	}
+	if got[0]["count"] != float64(1) {
+		t.Fatalf("expected count 1, got %+v", got[0])
+	}
+}
+
 func newTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	dsn := fmt.Sprintf("file:memdb_%d?mode=memory&cache=shared", time.Now().UnixNano())

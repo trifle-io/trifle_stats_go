@@ -360,11 +360,17 @@ func buildGetQuery(table string, identifiers []identifier) (string, []any) {
 			continue
 		}
 		parts := make([]string, 0, len(ident.columns))
-		for _, col := range ident.columns {
+		for idx, col := range ident.columns {
+			if col == "at" {
+				at := fmt.Sprint(ident.values[idx])
+				parts = append(parts, "(at = ? OR at = ?)")
+				args = append(args, at, withZeroMicrosRFC3339(at))
+				continue
+			}
 			parts = append(parts, fmt.Sprintf("%s = ?", col))
+			args = append(args, ident.values[idx])
 		}
 		conds = append(conds, "("+strings.Join(parts, " AND ")+")")
-		args = append(args, ident.values...)
 	}
 
 	if len(conds) == 0 {
@@ -387,13 +393,13 @@ func scanRow(mode JoinedIdentifier, rows *sql.Rows) (string, string, error) {
 		if err := rows.Scan(&key, &at, &data); err != nil {
 			return "", "", err
 		}
-		return key + "|" + at, data, nil
+		return key + "|" + normalizeSQLiteAtForLookup(at), data, nil
 	case JoinedSeparated:
 		var key, granularity, at, data string
 		if err := rows.Scan(&key, &granularity, &at, &data); err != nil {
 			return "", "", err
 		}
-		return key + "|" + granularity + "|" + at, data, nil
+		return key + "|" + granularity + "|" + normalizeSQLiteAtForLookup(at), data, nil
 	default:
 		var key string
 		var data string
@@ -406,6 +412,24 @@ func scanRow(mode JoinedIdentifier, rows *sql.Rows) (string, string, error) {
 
 func formatAt(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
+}
+
+func withZeroMicrosRFC3339(value string) string {
+	if strings.HasSuffix(value, "Z") && !strings.Contains(value, ".") {
+		return strings.TrimSuffix(value, "Z") + ".000000Z"
+	}
+	return value
+}
+
+func normalizeSQLiteAtForLookup(value string) string {
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		parsed, err = time.Parse(time.RFC3339, value)
+		if err != nil {
+			return value
+		}
+	}
+	return formatAt(parsed)
 }
 
 func jsonPathForKey(key string) string {
