@@ -33,6 +33,12 @@ _ = triflestats.Track(cfg, "orders", time.Now(), map[string]any{
 
 // Query
 result, _ := triflestats.Values(cfg, "orders", time.Now().Add(-7*24*time.Hour), time.Now(), "1d", false)
+
+// Process with Series
+series := triflestats.SeriesFromResult(result)
+series, _ = series.TransformExpression([]string{"revenue", "count"}, "a / b", "avg_order")
+timeline := series.FormatTimeline("avg_order", 1, nil)
+_ = timeline
 ```
 
 ## Drivers
@@ -76,6 +82,7 @@ driver := triflestats.NewMongoDriver(collection, triflestats.JoinedSeparated)
 - **Buffered writes.** Configurable in-memory buffer with size/duration/aggregation controls.
 - **Dynamic granularities.** Use any interval like `1m`, `10m`, `1h`, `6h`, `1d`, `1w`, `1mo`, `1q`, `1y`.
 - **Nested values.** Dot-notation packing for hierarchical data.
+- **Expression-based derived metrics.** Build averages, ratios, and custom formulas with one transponder.
 - **Data compatible.** Same storage format as the Ruby and Elixir implementations.
 
 ## Buffering

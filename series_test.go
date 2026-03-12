@@ -123,16 +123,25 @@ func TestFormatters(t *testing.T) {
 	}
 }
 
-func TestTransponderAdd(t *testing.T) {
+func TestTransformExpression(t *testing.T) {
 	series := NewSeries(nil, []map[string]any{
-		{"left": 2, "right": 3},
+		{"metrics": map[string]any{"sum": 30, "count": 3}},
+		{"metrics": map[string]any{"sum": 10, "count": 0}},
 	})
 
-	updated := series.TransformAdd("left", "right", "sum")
-	if len(updated.Values) != 1 {
-		t.Fatalf("expected 1 value row")
+	updated, err := series.TransformExpression([]string{"metrics.sum", "metrics.count"}, "a / b", "metrics.average")
+	if err != nil {
+		t.Fatalf("unexpected expression error: %v", err)
 	}
-	if updated.Values[0]["sum"] != float64(5) {
-		t.Fatalf("unexpected transponder result: %#v", updated.Values[0])
+	if len(updated.Values) != 2 {
+		t.Fatalf("expected 2 value rows")
+	}
+	first := updated.Values[0]["metrics"].(map[string]any)
+	second := updated.Values[1]["metrics"].(map[string]any)
+	if first["average"] != float64(10) {
+		t.Fatalf("unexpected expression result: %#v", first)
+	}
+	if second["average"] != nil {
+		t.Fatalf("expected nil result for divide by zero, got %#v", second["average"])
 	}
 }
