@@ -1,6 +1,7 @@
 package triflestats
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -79,10 +80,10 @@ func TestConfig_StorageUsesBufferWhenEnabled(t *testing.T) {
 	}
 
 	at := time.Date(2025, 2, 1, 10, 30, 0, 0, time.UTC)
-	if err := Track(cfg, "events", at, map[string]any{"count": 1}); err != nil {
+	if err := Track(context.Background(), cfg, "events", at, map[string]any{"count": 1}); err != nil {
 		t.Fatalf("first track failed: %v", err)
 	}
-	if err := Track(cfg, "events", at, map[string]any{"count": 2}); err != nil {
+	if err := Track(context.Background(), cfg, "events", at, map[string]any{"count": 2}); err != nil {
 		t.Fatalf("second track failed: %v", err)
 	}
 

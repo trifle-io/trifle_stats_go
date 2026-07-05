@@ -1,6 +1,7 @@
 package triflestats
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -13,9 +14,10 @@ import (
 
 func TestMySQLDriver_SetupCreatesModeSpecificSchema(t *testing.T) {
 	tests := []struct {
-		name    string
-		mode    JoinedIdentifier
-		pattern string
+		name      string
+		mode      JoinedIdentifier
+		pattern   string
+		pingTable bool
 	}{
 		{
 			name:    "full",
@@ -28,9 +30,10 @@ func TestMySQLDriver_SetupCreatesModeSpecificSchema(t *testing.T) {
 			pattern: "CREATE TABLE IF NOT EXISTS `test_stats` .*PRIMARY KEY \\(`key`, `at`\\)",
 		},
 		{
-			name:    "separated",
-			mode:    JoinedSeparated,
-			pattern: "CREATE TABLE IF NOT EXISTS `test_stats` .*PRIMARY KEY \\(`key`, `granularity`, `at`\\)",
+			name:      "separated",
+			mode:      JoinedSeparated,
+			pattern:   "CREATE TABLE IF NOT EXISTS `test_stats` .*PRIMARY KEY \\(`key`, `granularity`, `at`\\)",
+			pingTable: true,
 		},
 	}
 
@@ -44,8 +47,12 @@ func TestMySQLDriver_SetupCreatesModeSpecificSchema(t *testing.T) {
 
 			driver := NewMySQLDriver(db, "test_stats", tt.mode)
 			mock.ExpectExec(tt.pattern).WillReturnResult(sqlmock.NewResult(0, 0))
+			if tt.pingTable {
+				mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test_stats_ping` .*`key` VARCHAR\\(255\\) PRIMARY KEY").
+					WillReturnResult(sqlmock.NewResult(0, 0))
+			}
 
-			if err := driver.Setup(); err != nil {
+			if err := driver.Setup(context.Background()); err != nil {
 				t.Fatalf("setup failed: %v", err)
 			}
 			if err := mock.ExpectationsWereMet(); err != nil {
@@ -116,7 +123,7 @@ func TestMySQLDriver_SetIncGet_WithMockedDB(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := driver.Set([]Key{key}, map[string]any{"count": 1, "meta": map[string]any{"duration": 2}}); err != nil {
+	if err := driver.Set(context.Background(), []Key{key}, map[string]any{"count": 1, "meta": map[string]any{"duration": 2}}); err != nil {
 		t.Fatalf("set failed: %v", err)
 	}
 
@@ -128,7 +135,7 @@ func TestMySQLDriver_SetIncGet_WithMockedDB(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := driver.Inc([]Key{key}, map[string]any{"count": 2}); err != nil {
+	if err := driver.Inc(context.Background(), []Key{key}, map[string]any{"count": 2}); err != nil {
 		t.Fatalf("inc failed: %v", err)
 	}
 
@@ -136,7 +143,7 @@ func TestMySQLDriver_SetIncGet_WithMockedDB(t *testing.T) {
 		WithArgs(joinedKey).
 		WillReturnRows(sqlmock.NewRows([]string{"key", "data"}).AddRow(joinedKey, `{"count":3,"meta.duration":2}`))
 
-	values, err := driver.Get([]Key{key})
+	values, err := driver.Get(context.Background(), []Key{key})
 	if err != nil {
 		t.Fatalf("get failed: %v", err)
 	}
@@ -191,7 +198,7 @@ func TestMySQLDriver_IncCountPropagatesSystemTrackingCount(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	if err := driver.IncCount([]Key{key}, map[string]any{"count": 2}, 3); err != nil {
+	if err := driver.IncCount(context.Background(), []Key{key}, map[string]any{"count": 2}, 3); err != nil {
 		t.Fatalf("inc count failed: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -217,7 +224,7 @@ func TestMySQLDriver_GetReturnsEmptyMapWhenMissing(t *testing.T) {
 		WithArgs(joinedKey).
 		WillReturnRows(sqlmock.NewRows([]string{"key", "data"}))
 
-	values, err := driver.Get([]Key{key})
+	values, err := driver.Get(context.Background(), []Key{key})
 	if err != nil {
 		t.Fatalf("get failed: %v", err)
 	}
@@ -256,7 +263,7 @@ func TestMySQLDriver_IntegrationModes(t *testing.T) {
 			driver := NewMySQLDriver(db, table, mode)
 			driver.SystemTracking = true
 
-			if err := driver.Setup(); err != nil {
+			if err := driver.Setup(context.Background()); err != nil {
 				t.Fatalf("setup failed: %v", err)
 			}
 			defer func() {
@@ -266,14 +273,14 @@ func TestMySQLDriver_IntegrationModes(t *testing.T) {
 			at := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 			key := Key{Key: "events", Granularity: "1h", At: &at, TrackingKey: "manual"}
 
-			if err := driver.Set([]Key{key}, map[string]any{"count": 1, "meta": map[string]any{"duration": 2}}); err != nil {
+			if err := driver.Set(context.Background(), []Key{key}, map[string]any{"count": 1, "meta": map[string]any{"duration": 2}}); err != nil {
 				t.Fatalf("set failed: %v", err)
 			}
-			if err := driver.IncCount([]Key{key}, map[string]any{"count": 2}, 3); err != nil {
+			if err := driver.IncCount(context.Background(), []Key{key}, map[string]any{"count": 2}, 3); err != nil {
 				t.Fatalf("inc failed: %v", err)
 			}
 
-			values, err := driver.Get([]Key{key})
+			values, err := driver.Get(context.Background(), []Key{key})
 			if err != nil {
 				t.Fatalf("get failed: %v", err)
 			}
@@ -286,7 +293,7 @@ func TestMySQLDriver_IntegrationModes(t *testing.T) {
 			}
 
 			systemKey := Key{Key: systemKeyName, Granularity: "1h", At: &at}
-			systemValues, err := driver.Get([]Key{systemKey})
+			systemValues, err := driver.Get(context.Background(), []Key{systemKey})
 			if err != nil {
 				t.Fatalf("get system failed: %v", err)
 			}

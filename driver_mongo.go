@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -86,33 +87,36 @@ func (d *MongoDriver) Description() string {
 }
 
 // Inc increments numeric values in-place.
-func (d *MongoDriver) Inc(keys []Key, values map[string]any) error {
-	return d.IncCount(keys, values, 1)
+func (d *MongoDriver) Inc(ctx context.Context, keys []Key, values map[string]any) error {
+	return d.IncCount(ctx, keys, values, 1)
 }
 
 // IncCount increments values and records system tracking count.
-func (d *MongoDriver) IncCount(keys []Key, values map[string]any, count int64) error {
+func (d *MongoDriver) IncCount(ctx context.Context, keys []Key, values map[string]any, count int64) error {
 	if count <= 0 {
 		count = 1
 	}
-	return d.writeWithOperation(context.Background(), keys, values, "inc", count)
+	return d.writeWithOperation(ctx, keys, values, "inc", count)
 }
 
 // Set writes values without deleting unspecified fields.
-func (d *MongoDriver) Set(keys []Key, values map[string]any) error {
-	return d.SetCount(keys, values, 1)
+func (d *MongoDriver) Set(ctx context.Context, keys []Key, values map[string]any) error {
+	return d.SetCount(ctx, keys, values, 1)
 }
 
 // SetCount writes values and records system tracking count.
-func (d *MongoDriver) SetCount(keys []Key, values map[string]any, count int64) error {
+func (d *MongoDriver) SetCount(ctx context.Context, keys []Key, values map[string]any, count int64) error {
 	if count <= 0 {
 		count = 1
 	}
-	return d.writeWithOperation(context.Background(), keys, values, "set", count)
+	return d.writeWithOperation(ctx, keys, values, "set", count)
 }
 
-// Get fetches values for keys in order.
-func (d *MongoDriver) Get(keys []Key) ([]map[string]any, error) {
+// Get fetches values for keys in order using a single Find with $or.
+func (d *MongoDriver) Get(ctx context.Context, keys []Key) ([]map[string]any, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(keys) == 0 {
 		return []map[string]any{}, nil
 	}
@@ -120,32 +124,126 @@ func (d *MongoDriver) Get(keys []Key) ([]map[string]any, error) {
 		return nil, fmt.Errorf("mongo driver requires Collection")
 	}
 
-	ctx := context.Background()
-	results := make([]map[string]any, 0, len(keys))
+	filters := make([]bson.M, 0, len(keys))
+	lookups := make([]string, 0, len(keys))
 	for _, key := range keys {
 		filter, err := d.identifierFilter(key)
 		if err != nil {
 			return nil, err
 		}
-
-		var doc bson.M
-		err = d.Collection.FindOne(ctx, filter).Decode(&doc)
-		if err == mongo.ErrNoDocuments {
-			results = append(results, map[string]any{})
-			continue
-		}
+		filters = append(filters, filter)
+		lookup, err := d.lookupForKey(key)
 		if err != nil {
 			return nil, err
 		}
+		lookups = append(lookups, lookup)
+	}
 
+	cursor, err := d.Collection.Find(ctx, bson.M{"$or": filters})
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+
+	resultMap := map[string]map[string]any{}
+	for cursor.Next(ctx) {
+		var doc bson.M
+		if err := cursor.Decode(&doc); err != nil {
+			return nil, err
+		}
+		lookup, err := d.lookupForDocument(doc)
+		if err != nil {
+			return nil, err
+		}
 		data, ok := normalizeMongoValue(doc["data"]).(map[string]any)
 		if !ok || data == nil {
-			results = append(results, map[string]any{})
-			continue
+			data = map[string]any{}
+		}
+		resultMap[lookup] = data
+	}
+	if err := cursor.Err(); err != nil {
+		return nil, err
+	}
+
+	results := make([]map[string]any, 0, len(keys))
+	for _, lookup := range lookups {
+		data := resultMap[lookup]
+		if data == nil {
+			data = map[string]any{}
 		}
 		results = append(results, data)
 	}
 	return results, nil
+}
+
+// Ping stores the latest status payload for the key (separated mode only).
+func (d *MongoDriver) Ping(ctx context.Context, key Key, values map[string]any) error {
+	if d.JoinedIdentifier != JoinedSeparated {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if d.Collection == nil {
+		return fmt.Errorf("mongo driver requires Collection")
+	}
+	if key.At == nil {
+		return fmt.Errorf("ping requires At")
+	}
+
+	packed := Pack(map[string]any{"data": values})
+	set := bson.M{"at": key.At.UTC()}
+	for field, value := range packed {
+		set[field] = value
+	}
+	if expireAt := d.expireAtFor(key.At); expireAt != nil {
+		set["expire_at"] = *expireAt
+	}
+
+	filter := bson.M{"key": key.Key}
+	update := bson.M{"$set": set}
+	if d.BulkWrite {
+		models := []mongo.WriteModel{
+			mongo.NewUpdateManyModel().SetFilter(filter).SetUpdate(update).SetUpsert(true),
+		}
+		_, err := d.Collection.BulkWrite(ctx, models)
+		return err
+	}
+	_, err := d.Collection.UpdateMany(ctx, filter, update, options.Update().SetUpsert(true))
+	return err
+}
+
+// Scan returns the latest status for the key (separated mode only).
+func (d *MongoDriver) Scan(ctx context.Context, key Key) (time.Time, map[string]any, bool, error) {
+	if d.JoinedIdentifier != JoinedSeparated {
+		return time.Time{}, nil, false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if d.Collection == nil {
+		return time.Time{}, nil, false, fmt.Errorf("mongo driver requires Collection")
+	}
+
+	opts := options.FindOne().SetSort(bson.D{{Key: "at", Value: -1}})
+	var doc bson.M
+	err := d.Collection.FindOne(ctx, bson.M{"key": key.Key}, opts).Decode(&doc)
+	if err == mongo.ErrNoDocuments {
+		return time.Time{}, nil, false, nil
+	}
+	if err != nil {
+		return time.Time{}, nil, false, err
+	}
+
+	at, ok := mongoTimeValue(doc["at"])
+	if !ok {
+		return time.Time{}, nil, false, nil
+	}
+	data, ok := normalizeMongoValue(doc["data"]).(map[string]any)
+	if !ok || data == nil {
+		data = map[string]any{}
+	}
+	return at, data, true, nil
 }
 
 func (d *MongoDriver) writeWithOperation(ctx context.Context, keys []Key, values map[string]any, op string, count int64) error {
@@ -277,6 +375,61 @@ func (d *MongoDriver) identifierFilter(k Key) (bson.M, error) {
 		}, nil
 	default:
 		return bson.M{"key": k.Join(d.Separator)}, nil
+	}
+}
+
+// lookupForKey builds the map key used to correlate fetched documents with
+// requested keys. Timestamps are normalized to UTC unix seconds.
+func (d *MongoDriver) lookupForKey(k Key) (string, error) {
+	switch d.JoinedIdentifier {
+	case JoinedPartial:
+		if k.At == nil {
+			return "", fmt.Errorf("partial identifier requires At")
+		}
+		return k.PartialJoin(d.Separator) + "|" + mongoAtLookup(*k.At), nil
+	case JoinedSeparated:
+		if k.At == nil {
+			return "", fmt.Errorf("separated identifier requires At")
+		}
+		return k.Key + "|" + k.Granularity + "|" + mongoAtLookup(*k.At), nil
+	default:
+		return k.Join(d.Separator), nil
+	}
+}
+
+func (d *MongoDriver) lookupForDocument(doc bson.M) (string, error) {
+	key, _ := doc["key"].(string)
+	switch d.JoinedIdentifier {
+	case JoinedPartial:
+		at, ok := mongoTimeValue(doc["at"])
+		if !ok {
+			return "", fmt.Errorf("document missing at value")
+		}
+		return key + "|" + mongoAtLookup(at), nil
+	case JoinedSeparated:
+		granularity, _ := doc["granularity"].(string)
+		at, ok := mongoTimeValue(doc["at"])
+		if !ok {
+			return "", fmt.Errorf("document missing at value")
+		}
+		return key + "|" + granularity + "|" + mongoAtLookup(at), nil
+	default:
+		return key, nil
+	}
+}
+
+func mongoAtLookup(t time.Time) string {
+	return fmt.Sprintf("%d", t.UTC().Unix())
+}
+
+func mongoTimeValue(value any) (time.Time, bool) {
+	switch node := value.(type) {
+	case time.Time:
+		return node.UTC(), true
+	case primitive.DateTime:
+		return node.Time().UTC(), true
+	default:
+		return time.Time{}, false
 	}
 }
 

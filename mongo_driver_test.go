@@ -145,7 +145,7 @@ func TestMongoDriver_IncCountBulkWriteAndTracking(t *testing.T) {
 			Granularity: "1h",
 			At:          &at,
 		}
-		if err := driver.IncCount([]Key{key}, map[string]any{"count": 2}, 3); err != nil {
+		if err := driver.IncCount(context.Background(), []Key{key}, map[string]any{"count": 2}, 3); err != nil {
 			mt.Fatalf("inc count failed: %v", err)
 		}
 
@@ -177,7 +177,7 @@ func TestMongoDriver_IncCountSequentialUpdatesWhenBulkWriteDisabled(t *testing.T
 
 		at := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 		key := Key{Key: "events", Granularity: "1h", At: &at}
-		if err := driver.Inc([]Key{key}, map[string]any{"count": 1}); err != nil {
+		if err := driver.Inc(context.Background(), []Key{key}, map[string]any{"count": 1}); err != nil {
 			mt.Fatalf("inc failed: %v", err)
 		}
 
@@ -204,7 +204,7 @@ func TestMongoDriver_SetCountUsesSetOperation(t *testing.T) {
 
 		at := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 		key := Key{Key: "events", Granularity: "1h", At: &at}
-		if err := driver.SetCount([]Key{key}, map[string]any{"status": "ok"}, 2); err != nil {
+		if err := driver.SetCount(context.Background(), []Key{key}, map[string]any{"status": "ok"}, 2); err != nil {
 			mt.Fatalf("set count failed: %v", err)
 		}
 
@@ -244,7 +244,7 @@ func TestMongoDriver_GetReturnsValuesInOrder(t *testing.T) {
 			mtest.CreateCursorResponse(0, ns, mtest.FirstBatch),
 		)
 
-		values, err := driver.Get([]Key{key1, key2})
+		values, err := driver.Get(context.Background(), []Key{key1, key2})
 		if err != nil {
 			mt.Fatalf("get failed: %v", err)
 		}

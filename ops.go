@@ -1,6 +1,7 @@
 package triflestats
 
 import (
+	"context"
 	"fmt"
 	"time"
 )
@@ -9,6 +10,13 @@ import (
 type ValuesResult struct {
 	At     []time.Time
 	Values []map[string]any
+}
+
+// ScanResult mirrors Ruby's Operations::Status::Scan return structure.
+type ScanResult struct {
+	At     time.Time
+	Values map[string]any
+	Found  bool
 }
 
 const untrackedKeyName = "__untracked__"
@@ -28,16 +36,16 @@ func Untracked() TrackOption {
 }
 
 // Track increments values across configured granularities.
-func Track(cfg *Config, key string, at time.Time, values map[string]any, opts ...TrackOption) error {
-	return trackOrAssert(cfg, key, at, values, "inc", opts...)
+func Track(ctx context.Context, cfg *Config, key string, at time.Time, values map[string]any, opts ...TrackOption) error {
+	return trackOrAssert(ctx, cfg, key, at, values, "inc", opts...)
 }
 
 // Assert sets values across configured granularities.
-func Assert(cfg *Config, key string, at time.Time, values map[string]any, opts ...TrackOption) error {
-	return trackOrAssert(cfg, key, at, values, "set", opts...)
+func Assert(ctx context.Context, cfg *Config, key string, at time.Time, values map[string]any, opts ...TrackOption) error {
+	return trackOrAssert(ctx, cfg, key, at, values, "set", opts...)
 }
 
-func trackOrAssert(cfg *Config, key string, at time.Time, values map[string]any, op string, opts ...TrackOption) error {
+func trackOrAssert(ctx context.Context, cfg *Config, key string, at time.Time, values map[string]any, op string, opts ...TrackOption) error {
 	if cfg == nil {
 		return fmt.Errorf("config required")
 	}
@@ -72,16 +80,16 @@ func trackOrAssert(cfg *Config, key string, at time.Time, values map[string]any,
 
 	switch op {
 	case "inc":
-		return storage.Inc(keys, values)
+		return storage.Inc(ctx, keys, values)
 	case "set":
-		return storage.Set(keys, values)
+		return storage.Set(ctx, keys, values)
 	default:
 		return fmt.Errorf("invalid op")
 	}
 }
 
 // Values retrieves time series values for a granularity.
-func Values(cfg *Config, key string, from, to time.Time, granularity string, skipBlanks bool) (ValuesResult, error) {
+func Values(ctx context.Context, cfg *Config, key string, from, to time.Time, granularity string, skipBlanks bool) (ValuesResult, error) {
 	if cfg == nil || cfg.Driver == nil {
 		return ValuesResult{}, fmt.Errorf("config and driver required")
 	}
@@ -102,7 +110,7 @@ func Values(cfg *Config, key string, from, to time.Time, granularity string, ski
 		})
 	}
 
-	valuesList, err := cfg.Driver.Get(keys)
+	valuesList, err := cfg.Driver.Get(ctx, keys)
 	if err != nil {
 		return ValuesResult{}, err
 	}
@@ -125,4 +133,26 @@ func Values(cfg *Config, key string, from, to time.Time, granularity string, ski
 	}
 
 	return result, nil
+}
+
+// Beam stores a status payload for key at the given time. It bypasses the
+// buffer and writes through the configured driver directly.
+func Beam(ctx context.Context, cfg *Config, key string, at time.Time, values map[string]any) error {
+	if cfg == nil || cfg.Driver == nil {
+		return fmt.Errorf("config and driver required")
+	}
+	return cfg.Driver.Ping(ctx, Key{Key: key, At: &at}, values)
+}
+
+// Scan retrieves the latest status payload for key. It bypasses the buffer
+// and reads through the configured driver directly.
+func Scan(ctx context.Context, cfg *Config, key string) (ScanResult, error) {
+	if cfg == nil || cfg.Driver == nil {
+		return ScanResult{}, fmt.Errorf("config and driver required")
+	}
+	at, values, found, err := cfg.Driver.Scan(ctx, Key{Key: key})
+	if err != nil {
+		return ScanResult{}, err
+	}
+	return ScanResult{At: at, Values: values, Found: found}, nil
 }

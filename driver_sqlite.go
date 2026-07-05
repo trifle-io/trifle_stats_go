@@ -1,8 +1,10 @@
 package triflestats
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -15,6 +17,7 @@ import (
 type SQLiteDriver struct {
 	DB               *sql.DB
 	TableName        string
+	PingTableName    string
 	Separator        string
 	JoinedIdentifier JoinedIdentifier
 	SystemTracking   bool
@@ -28,6 +31,7 @@ func NewSQLiteDriver(db *sql.DB, tableName string, joinedIdentifier JoinedIdenti
 	return &SQLiteDriver{
 		DB:               db,
 		TableName:        tableName,
+		PingTableName:    tableName + "_ping",
 		Separator:        "::",
 		JoinedIdentifier: joinedIdentifier,
 		SystemTracking:   true,
@@ -35,18 +39,19 @@ func NewSQLiteDriver(db *sql.DB, tableName string, joinedIdentifier JoinedIdenti
 }
 
 // Setup initializes the table schema for the configured identifier mode.
-func (d *SQLiteDriver) Setup() error {
+func (d *SQLiteDriver) Setup(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if d.DB == nil {
 		return fmt.Errorf("sqlite driver requires DB")
 	}
-	if err := d.applyPragmas(); err != nil {
+	if err := d.applyPragmas(ctx); err != nil {
 		return err
 	}
 
 	var query string
 	switch d.JoinedIdentifier {
-	case JoinedFull:
-		query = fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (key TEXT PRIMARY KEY, data TEXT NOT NULL DEFAULT '{}');`, d.TableName)
 	case JoinedPartial:
 		query = fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (key TEXT NOT NULL, at TEXT NOT NULL, data TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (key, at));`, d.TableName)
 	case JoinedSeparated:
@@ -54,8 +59,24 @@ func (d *SQLiteDriver) Setup() error {
 	default:
 		query = fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (key TEXT PRIMARY KEY, data TEXT NOT NULL DEFAULT '{}');`, d.TableName)
 	}
-	_, err := d.DB.Exec(query)
-	return err
+	if _, err := d.DB.ExecContext(ctx, query); err != nil {
+		return err
+	}
+
+	if d.JoinedIdentifier == JoinedSeparated {
+		pingQuery := fmt.Sprintf(`CREATE TABLE IF NOT EXISTS %s (key TEXT PRIMARY KEY, at TEXT NOT NULL, data TEXT NOT NULL DEFAULT '{}');`, d.pingTable())
+		if _, err := d.DB.ExecContext(ctx, pingQuery); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *SQLiteDriver) pingTable() string {
+	if d.PingTableName != "" {
+		return d.PingTableName
+	}
+	return d.TableName + "_ping"
 }
 
 func (d *SQLiteDriver) Description() string {
@@ -69,33 +90,36 @@ func (d *SQLiteDriver) Description() string {
 }
 
 // Inc increments numeric values in-place.
-func (d *SQLiteDriver) Inc(keys []Key, values map[string]any) error {
-	return d.IncCount(keys, values, 1)
+func (d *SQLiteDriver) Inc(ctx context.Context, keys []Key, values map[string]any) error {
+	return d.IncCount(ctx, keys, values, 1)
 }
 
 // IncCount increments values and records system tracking count.
-func (d *SQLiteDriver) IncCount(keys []Key, values map[string]any, count int64) error {
+func (d *SQLiteDriver) IncCount(ctx context.Context, keys []Key, values map[string]any, count int64) error {
 	if count <= 0 {
 		count = 1
 	}
-	return d.writeWithOperation(keys, values, "inc", count)
+	return d.writeWithOperation(ctx, keys, values, "inc", count)
 }
 
 // Set sets provided values (without deleting other keys).
-func (d *SQLiteDriver) Set(keys []Key, values map[string]any) error {
-	return d.SetCount(keys, values, 1)
+func (d *SQLiteDriver) Set(ctx context.Context, keys []Key, values map[string]any) error {
+	return d.SetCount(ctx, keys, values, 1)
 }
 
 // SetCount sets values and records system tracking count.
-func (d *SQLiteDriver) SetCount(keys []Key, values map[string]any, count int64) error {
+func (d *SQLiteDriver) SetCount(ctx context.Context, keys []Key, values map[string]any, count int64) error {
 	if count <= 0 {
 		count = 1
 	}
-	return d.writeWithOperation(keys, values, "set", count)
+	return d.writeWithOperation(ctx, keys, values, "set", count)
 }
 
 // Get fetches values for keys in order.
-func (d *SQLiteDriver) Get(keys []Key) ([]map[string]any, error) {
+func (d *SQLiteDriver) Get(ctx context.Context, keys []Key) ([]map[string]any, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(keys) == 0 {
 		return []map[string]any{}, nil
 	}
@@ -110,7 +134,7 @@ func (d *SQLiteDriver) Get(keys []Key) ([]map[string]any, error) {
 	}
 
 	query, args := buildGetQuery(d.TableName, identifiers)
-	rows, err := d.DB.Query(query, args...)
+	rows, err := d.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -137,15 +161,84 @@ func (d *SQLiteDriver) Get(keys []Key) ([]map[string]any, error) {
 	}
 
 	results := make([]map[string]any, 0, len(keys))
-	for _, k := range keys {
-		ident, err := d.identifierForKey(k)
-		if err != nil {
-			return nil, err
-		}
+	for _, ident := range identifiers {
 		packed := resultMap[ident.lookupKey]
 		results = append(results, Unpack(packed))
 	}
 	return results, nil
+}
+
+// Ping stores the latest status payload for the key (separated mode only).
+func (d *SQLiteDriver) Ping(ctx context.Context, key Key, values map[string]any) error {
+	if d.JoinedIdentifier != JoinedSeparated {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if d.DB == nil {
+		return fmt.Errorf("sqlite driver requires DB")
+	}
+	if key.At == nil {
+		return fmt.Errorf("ping requires At")
+	}
+
+	packed := Pack(map[string]any{"data": values, "at": key.At.Unix()})
+	dataJSON, err := json.Marshal(packed)
+	if err != nil {
+		return err
+	}
+	atFormatted := formatAt(*key.At)
+
+	query := fmt.Sprintf(
+		`INSERT INTO %s (key, at, data) VALUES (?, ?, json(?)) ON CONFLICT (key) DO UPDATE SET at = ?, data = json(?);`,
+		d.pingTable(),
+	)
+
+	tx, err := d.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+	if _, err := tx.ExecContext(ctx, query, key.Key, atFormatted, string(dataJSON), atFormatted, string(dataJSON)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Scan returns the latest status for the key (separated mode only).
+func (d *SQLiteDriver) Scan(ctx context.Context, key Key) (time.Time, map[string]any, bool, error) {
+	if d.JoinedIdentifier != JoinedSeparated {
+		return time.Time{}, nil, false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if d.DB == nil {
+		return time.Time{}, nil, false, fmt.Errorf("sqlite driver requires DB")
+	}
+
+	query := fmt.Sprintf(`SELECT at, data FROM %s WHERE key = ? ORDER BY at DESC LIMIT 1;`, d.pingTable())
+	var atRaw, dataRaw string
+	err := d.DB.QueryRowContext(ctx, query, key.Key).Scan(&atRaw, &dataRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil, false, nil
+	}
+	if err != nil {
+		return time.Time{}, nil, false, err
+	}
+
+	at, err := time.Parse(time.RFC3339, atRaw)
+	if err != nil {
+		return time.Time{}, nil, false, err
+	}
+	var packed map[string]any
+	if err := json.Unmarshal([]byte(dataRaw), &packed); err != nil {
+		return time.Time{}, nil, false, nil
+	}
+	return at.UTC(), Unpack(packed), true, nil
 }
 
 // --- internal helpers ---
@@ -158,13 +251,6 @@ type identifier struct {
 
 func (d *SQLiteDriver) identifierForKey(k Key) (identifier, error) {
 	switch d.JoinedIdentifier {
-	case JoinedFull:
-		val := k.Join(d.Separator)
-		return identifier{
-			columns:   []string{"key"},
-			values:    []any{val},
-			lookupKey: val,
-		}, nil
 	case JoinedPartial:
 		if k.At == nil {
 			return identifier{}, fmt.Errorf("partial identifier requires At")
@@ -196,7 +282,10 @@ func (d *SQLiteDriver) identifierForKey(k Key) (identifier, error) {
 	}
 }
 
-func (d *SQLiteDriver) writeWithOperation(keys []Key, values map[string]any, op string, count int64) error {
+func (d *SQLiteDriver) writeWithOperation(ctx context.Context, keys []Key, values map[string]any, op string, count int64) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(keys) == 0 {
 		return nil
 	}
@@ -209,7 +298,7 @@ func (d *SQLiteDriver) writeWithOperation(keys []Key, values map[string]any, op 
 		return nil
 	}
 
-	tx, err := d.DB.Begin()
+	tx, err := d.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -222,7 +311,7 @@ func (d *SQLiteDriver) writeWithOperation(keys []Key, values map[string]any, op 
 		if err != nil {
 			return err
 		}
-		if err := d.batchWrite(tx, ident, packed, op); err != nil {
+		if err := d.batchWrite(ctx, tx, ident, packed, op); err != nil {
 			return err
 		}
 		if d.SystemTracking {
@@ -236,7 +325,7 @@ func (d *SQLiteDriver) writeWithOperation(keys []Key, values map[string]any, op 
 				return err
 			}
 			systemData := systemDataFor(k.SystemTrackingKey(), count)
-			if err := d.batchWrite(tx, systemIdent, systemData, "inc"); err != nil {
+			if err := d.batchWrite(ctx, tx, systemIdent, systemData, "inc"); err != nil {
 				return err
 			}
 		}
@@ -245,7 +334,7 @@ func (d *SQLiteDriver) writeWithOperation(keys []Key, values map[string]any, op 
 	return tx.Commit()
 }
 
-func (d *SQLiteDriver) batchWrite(tx *sql.Tx, ident identifier, packed map[string]any, op string) error {
+func (d *SQLiteDriver) batchWrite(ctx context.Context, tx *sql.Tx, ident identifier, packed map[string]any, op string) error {
 	const batchSize = 10
 
 	keys := make([]string, 0, len(packed))
@@ -268,7 +357,7 @@ func (d *SQLiteDriver) batchWrite(tx *sql.Tx, ident identifier, packed map[strin
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(query, args...); err != nil {
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 			return err
 		}
 	}
@@ -381,13 +470,6 @@ func buildGetQuery(table string, identifiers []identifier) (string, []any) {
 
 func scanRow(mode JoinedIdentifier, rows *sql.Rows) (string, string, error) {
 	switch mode {
-	case JoinedFull:
-		var key string
-		var data string
-		if err := rows.Scan(&key, &data); err != nil {
-			return "", "", err
-		}
-		return key, data, nil
 	case JoinedPartial:
 		var key, at, data string
 		if err := rows.Scan(&key, &at, &data); err != nil {
@@ -437,14 +519,14 @@ func jsonPathForKey(key string) string {
 	return fmt.Sprintf("$.%s", escaped)
 }
 
-func (d *SQLiteDriver) applyPragmas() error {
+func (d *SQLiteDriver) applyPragmas(ctx context.Context) error {
 	pragmas := []string{
 		"PRAGMA journal_mode=WAL;",
 		"PRAGMA synchronous=NORMAL;",
 		"PRAGMA busy_timeout=5000;",
 	}
 	for _, p := range pragmas {
-		if _, err := d.DB.Exec(p); err != nil {
+		if _, err := d.DB.ExecContext(ctx, p); err != nil {
 			return err
 		}
 	}

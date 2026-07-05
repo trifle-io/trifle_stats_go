@@ -14,8 +14,6 @@ type Config struct {
 	TimeZone          string
 	BeginningOfWeek   time.Weekday
 	Granularities     []string
-	Separator         string
-	JoinedIdentifier  JoinedIdentifier
 	BufferEnabled     bool
 	BufferDuration    time.Duration
 	BufferSize        int
@@ -31,16 +29,14 @@ type Config struct {
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{
-		TimeZone:         "GMT",
-		BeginningOfWeek:  time.Monday,
-		Granularities:    nil, // nil means default list
-		Separator:        "::",
-		JoinedIdentifier: JoinedFull,
-		BufferEnabled:    true,
-		BufferDuration:   time.Second,
-		BufferSize:       256,
-		BufferAggregate:  true,
-		BufferAsync:      true,
+		TimeZone:        "GMT",
+		BeginningOfWeek: time.Monday,
+		Granularities:   nil, // nil means default list
+		BufferEnabled:   true,
+		BufferDuration:  time.Second,
+		BufferSize:      256,
+		BufferAggregate: true,
+		BufferAsync:     true,
 	}
 }
 

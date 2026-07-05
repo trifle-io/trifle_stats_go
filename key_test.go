@@ -55,7 +55,7 @@ func TestParseJoinedIdentifier(t *testing.T) {
 		{input: "PARTIAL", expect: JoinedPartial},
 		{input: "separated", expect: JoinedSeparated},
 		{input: "SEPARATED", expect: JoinedSeparated},
-		{input: "", expect: JoinedSeparated},
+		{input: "", expect: JoinedFull},
 		{input: "unknown", expect: JoinedFull},
 	}
 

@@ -1,8 +1,10 @@
 package triflestats
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -15,6 +17,7 @@ import (
 type MySQLDriver struct {
 	DB               *sql.DB
 	TableName        string
+	PingTableName    string
 	Separator        string
 	JoinedIdentifier JoinedIdentifier
 	SystemTracking   bool
@@ -28,6 +31,7 @@ func NewMySQLDriver(db *sql.DB, tableName string, joinedIdentifier JoinedIdentif
 	return &MySQLDriver{
 		DB:               db,
 		TableName:        tableName,
+		PingTableName:    tableName + "_ping",
 		Separator:        "::",
 		JoinedIdentifier: joinedIdentifier,
 		SystemTracking:   true,
@@ -35,7 +39,10 @@ func NewMySQLDriver(db *sql.DB, tableName string, joinedIdentifier JoinedIdentif
 }
 
 // Setup initializes table schema for the configured identifier mode.
-func (d *MySQLDriver) Setup() error {
+func (d *MySQLDriver) Setup(ctx context.Context) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if d.DB == nil {
 		return fmt.Errorf("mysql driver requires DB")
 	}
@@ -43,8 +50,6 @@ func (d *MySQLDriver) Setup() error {
 	var query string
 	table := quoteMySQLIdentifier(d.TableName)
 	switch d.JoinedIdentifier {
-	case JoinedFull:
-		query = fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (`key` VARCHAR(255) PRIMARY KEY, `data` JSON NOT NULL);", table)
 	case JoinedPartial:
 		query = fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (`key` VARCHAR(255) NOT NULL, `at` DATETIME(6) NOT NULL, `data` JSON NOT NULL, PRIMARY KEY (`key`, `at`));", table)
 	case JoinedSeparated:
@@ -53,8 +58,24 @@ func (d *MySQLDriver) Setup() error {
 		query = fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (`key` VARCHAR(255) PRIMARY KEY, `data` JSON NOT NULL);", table)
 	}
 
-	_, err := d.DB.Exec(query)
-	return err
+	if _, err := d.DB.ExecContext(ctx, query); err != nil {
+		return err
+	}
+
+	if d.JoinedIdentifier == JoinedSeparated {
+		pingQuery := fmt.Sprintf("CREATE TABLE IF NOT EXISTS %s (`key` VARCHAR(255) PRIMARY KEY, `at` DATETIME(6) NOT NULL, `data` JSON NOT NULL);", quoteMySQLIdentifier(d.pingTable()))
+		if _, err := d.DB.ExecContext(ctx, pingQuery); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (d *MySQLDriver) pingTable() string {
+	if d.PingTableName != "" {
+		return d.PingTableName
+	}
+	return d.TableName + "_ping"
 }
 
 func (d *MySQLDriver) Description() string {
@@ -68,33 +89,36 @@ func (d *MySQLDriver) Description() string {
 }
 
 // Inc increments numeric values in-place.
-func (d *MySQLDriver) Inc(keys []Key, values map[string]any) error {
-	return d.IncCount(keys, values, 1)
+func (d *MySQLDriver) Inc(ctx context.Context, keys []Key, values map[string]any) error {
+	return d.IncCount(ctx, keys, values, 1)
 }
 
 // IncCount increments values and records system tracking count.
-func (d *MySQLDriver) IncCount(keys []Key, values map[string]any, count int64) error {
+func (d *MySQLDriver) IncCount(ctx context.Context, keys []Key, values map[string]any, count int64) error {
 	if count <= 0 {
 		count = 1
 	}
-	return d.writeWithOperation(keys, values, "inc", count)
+	return d.writeWithOperation(ctx, keys, values, "inc", count)
 }
 
 // Set sets provided values without deleting unspecified keys.
-func (d *MySQLDriver) Set(keys []Key, values map[string]any) error {
-	return d.SetCount(keys, values, 1)
+func (d *MySQLDriver) Set(ctx context.Context, keys []Key, values map[string]any) error {
+	return d.SetCount(ctx, keys, values, 1)
 }
 
 // SetCount sets values and records system tracking count.
-func (d *MySQLDriver) SetCount(keys []Key, values map[string]any, count int64) error {
+func (d *MySQLDriver) SetCount(ctx context.Context, keys []Key, values map[string]any, count int64) error {
 	if count <= 0 {
 		count = 1
 	}
-	return d.writeWithOperation(keys, values, "set", count)
+	return d.writeWithOperation(ctx, keys, values, "set", count)
 }
 
 // Get fetches values for keys in order.
-func (d *MySQLDriver) Get(keys []Key) ([]map[string]any, error) {
+func (d *MySQLDriver) Get(ctx context.Context, keys []Key) ([]map[string]any, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(keys) == 0 {
 		return []map[string]any{}, nil
 	}
@@ -112,7 +136,7 @@ func (d *MySQLDriver) Get(keys []Key) ([]map[string]any, error) {
 	}
 
 	query, args := buildMySQLGetQuery(d.TableName, d.JoinedIdentifier, identifiers)
-	rows, err := d.DB.Query(query, args...)
+	rows, err := d.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -138,17 +162,91 @@ func (d *MySQLDriver) Get(keys []Key) ([]map[string]any, error) {
 	}
 
 	results := make([]map[string]any, 0, len(keys))
-	for _, key := range keys {
-		ident, err := d.identifierForKey(key)
-		if err != nil {
-			return nil, err
-		}
+	for _, ident := range identifiers {
 		results = append(results, Unpack(resultMap[ident.lookupKey]))
 	}
 	return results, nil
 }
 
-func (d *MySQLDriver) writeWithOperation(keys []Key, values map[string]any, op string, count int64) error {
+// Ping stores the latest status payload for the key (separated mode only).
+func (d *MySQLDriver) Ping(ctx context.Context, key Key, values map[string]any) error {
+	if d.JoinedIdentifier != JoinedSeparated {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if d.DB == nil {
+		return fmt.Errorf("mysql driver requires DB")
+	}
+	if key.At == nil {
+		return fmt.Errorf("ping requires At")
+	}
+
+	packed := Pack(map[string]any{"data": values, "at": key.At.Unix()})
+	dataJSON, err := json.Marshal(packed)
+	if err != nil {
+		return err
+	}
+
+	query := fmt.Sprintf(
+		"INSERT INTO %s (`key`, `at`, `data`) VALUES (?, ?, CAST(? AS JSON)) ON DUPLICATE KEY UPDATE `at` = VALUES(`at`), `data` = VALUES(`data`);",
+		quoteMySQLIdentifier(d.pingTable()),
+	)
+
+	tx, err := d.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+	if _, err := tx.ExecContext(ctx, query, key.Key, formatMySQLAt(*key.At), string(dataJSON)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Scan returns the latest status for the key (separated mode only).
+func (d *MySQLDriver) Scan(ctx context.Context, key Key) (time.Time, map[string]any, bool, error) {
+	if d.JoinedIdentifier != JoinedSeparated {
+		return time.Time{}, nil, false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if d.DB == nil {
+		return time.Time{}, nil, false, fmt.Errorf("mysql driver requires DB")
+	}
+
+	query := fmt.Sprintf(
+		"SELECT DATE_FORMAT(`at`, '%%Y-%%m-%%d %%H:%%i:%%s.%%f') AS at, CAST(`data` AS CHAR) AS data FROM %s WHERE `key` = ? ORDER BY `at` DESC LIMIT 1;",
+		quoteMySQLIdentifier(d.pingTable()),
+	)
+	var atRaw, dataRaw string
+	err := d.DB.QueryRowContext(ctx, query, key.Key).Scan(&atRaw, &dataRaw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return time.Time{}, nil, false, nil
+	}
+	if err != nil {
+		return time.Time{}, nil, false, err
+	}
+
+	at, err := parseMySQLAtString(atRaw)
+	if err != nil {
+		return time.Time{}, nil, false, err
+	}
+	var packed map[string]any
+	if err := json.Unmarshal([]byte(dataRaw), &packed); err != nil {
+		return time.Time{}, nil, false, nil
+	}
+	return at, Unpack(packed), true, nil
+}
+
+func (d *MySQLDriver) writeWithOperation(ctx context.Context, keys []Key, values map[string]any, op string, count int64) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(keys) == 0 {
 		return nil
 	}
@@ -161,7 +259,7 @@ func (d *MySQLDriver) writeWithOperation(keys []Key, values map[string]any, op s
 		return nil
 	}
 
-	tx, err := d.DB.Begin()
+	tx, err := d.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
@@ -178,7 +276,7 @@ func (d *MySQLDriver) writeWithOperation(keys []Key, values map[string]any, op s
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(query, args...); err != nil {
+		if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 			return err
 		}
 
@@ -187,7 +285,6 @@ func (d *MySQLDriver) writeWithOperation(keys []Key, values map[string]any, op s
 				Key:         systemKeyName,
 				Granularity: key.Granularity,
 				At:          key.At,
-				TrackingKey: key.TrackingKey,
 			}
 			systemIdent, err := d.identifierForKey(systemKey)
 			if err != nil {
@@ -202,7 +299,7 @@ func (d *MySQLDriver) writeWithOperation(keys []Key, values map[string]any, op s
 			if err != nil {
 				return err
 			}
-			if _, err := tx.Exec(systemQuery, systemArgs...); err != nil {
+			if _, err := tx.ExecContext(ctx, systemQuery, systemArgs...); err != nil {
 				return err
 			}
 		}

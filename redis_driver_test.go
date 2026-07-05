@@ -1,6 +1,7 @@
 package triflestats
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -31,17 +32,17 @@ func TestRedisDriver_IncSetGetAndSystemTracking(t *testing.T) {
 	at := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 	key := Key{Key: "events", Granularity: "1h", At: &at}
 
-	if err := driver.SetCount([]Key{key}, map[string]any{"count": 1, "meta": map[string]any{"duration": 2}}, 2); err != nil {
+	if err := driver.SetCount(context.Background(), []Key{key}, map[string]any{"count": 1, "meta": map[string]any{"duration": 2}}, 2); err != nil {
 		t.Fatalf("set failed: %v", err)
 	}
-	if err := driver.Inc([]Key{key}, map[string]any{"count": 3}); err != nil {
+	if err := driver.Inc(context.Background(), []Key{key}, map[string]any{"count": 3}); err != nil {
 		t.Fatalf("inc failed: %v", err)
 	}
-	if err := driver.Set([]Key{key}, map[string]any{"status": "ok"}); err != nil {
+	if err := driver.Set(context.Background(), []Key{key}, map[string]any{"status": "ok"}); err != nil {
 		t.Fatalf("set merge failed: %v", err)
 	}
 
-	values, err := driver.Get([]Key{key})
+	values, err := driver.Get(context.Background(), []Key{key})
 	if err != nil {
 		t.Fatalf("get failed: %v", err)
 	}
@@ -61,7 +62,7 @@ func TestRedisDriver_IncSetGetAndSystemTracking(t *testing.T) {
 	}
 
 	systemKey := Key{Key: systemKeyName, Granularity: "1h", At: &at}
-	systemValues, err := driver.Get([]Key{systemKey})
+	systemValues, err := driver.Get(context.Background(), []Key{systemKey})
 	if err != nil {
 		t.Fatalf("get system key failed: %v", err)
 	}
@@ -85,12 +86,12 @@ func TestRedisDriver_TrackingKeyOverride(t *testing.T) {
 		At:          &at,
 	}
 
-	if err := driver.IncCount([]Key{key}, map[string]any{"count": 1}, 3); err != nil {
+	if err := driver.IncCount(context.Background(), []Key{key}, map[string]any{"count": 1}, 3); err != nil {
 		t.Fatalf("inc count failed: %v", err)
 	}
 
 	systemKey := Key{Key: systemKeyName, Granularity: "1h", At: &at}
-	systemValues, err := driver.Get([]Key{systemKey})
+	systemValues, err := driver.Get(context.Background(), []Key{systemKey})
 	if err != nil {
 		t.Fatalf("get system key failed: %v", err)
 	}
@@ -105,7 +106,7 @@ func TestRedisDriver_IncRejectsNonNumericValues(t *testing.T) {
 	at := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 	key := Key{Key: "events", Granularity: "1h", At: &at}
 
-	err := driver.Inc([]Key{key}, map[string]any{"status": "running"})
+	err := driver.Inc(context.Background(), []Key{key}, map[string]any{"status": "running"})
 	if err == nil {
 		t.Fatalf("expected error for non-numeric increment")
 	}
@@ -118,7 +119,7 @@ func TestRedisDriver_UsesConfiguredSeparatorAndPrefix(t *testing.T) {
 	at := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 	key := Key{Key: "events", Granularity: "1h", At: &at}
 
-	if err := driver.Set([]Key{key}, map[string]any{"count": 1}); err != nil {
+	if err := driver.Set(context.Background(), []Key{key}, map[string]any{"count": 1}); err != nil {
 		t.Fatalf("set failed: %v", err)
 	}
 

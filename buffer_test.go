@@ -1,6 +1,7 @@
 package triflestats
 
 import (
+	"context"
 	"sync"
 	"testing"
 	"time"
@@ -31,29 +32,29 @@ type nonCountBufferDriver struct {
 	setOps int
 }
 
-func (d *nonCountBufferDriver) Inc(keys []Key, values map[string]any) error {
+func (d *nonCountBufferDriver) Inc(_ context.Context, keys []Key, values map[string]any) error {
 	d.mu.Lock()
 	d.incOps++
 	d.mu.Unlock()
 	return nil
 }
 
-func (d *nonCountBufferDriver) Set(keys []Key, values map[string]any) error {
+func (d *nonCountBufferDriver) Set(_ context.Context, keys []Key, values map[string]any) error {
 	d.mu.Lock()
 	d.setOps++
 	d.mu.Unlock()
 	return nil
 }
 
-func (d *bufferTestDriver) Inc(keys []Key, values map[string]any) error {
-	return d.IncCount(keys, values, 1)
+func (d *bufferTestDriver) Inc(ctx context.Context, keys []Key, values map[string]any) error {
+	return d.IncCount(ctx, keys, values, 1)
 }
 
-func (d *bufferTestDriver) Set(keys []Key, values map[string]any) error {
-	return d.SetCount(keys, values, 1)
+func (d *bufferTestDriver) Set(ctx context.Context, keys []Key, values map[string]any) error {
+	return d.SetCount(ctx, keys, values, 1)
 }
 
-func (d *bufferTestDriver) IncCount(keys []Key, values map[string]any, count int64) error {
+func (d *bufferTestDriver) IncCount(_ context.Context, keys []Key, values map[string]any, count int64) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.writes = append(d.writes, recordedWrite{
@@ -65,7 +66,7 @@ func (d *bufferTestDriver) IncCount(keys []Key, values map[string]any, count int
 	return nil
 }
 
-func (d *bufferTestDriver) SetCount(keys []Key, values map[string]any, count int64) error {
+func (d *bufferTestDriver) SetCount(_ context.Context, keys []Key, values map[string]any, count int64) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.writes = append(d.writes, recordedWrite{
@@ -77,8 +78,16 @@ func (d *bufferTestDriver) SetCount(keys []Key, values map[string]any, count int
 	return nil
 }
 
-func (d *bufferTestDriver) Get(keys []Key) ([]map[string]any, error) {
+func (d *bufferTestDriver) Get(_ context.Context, keys []Key) ([]map[string]any, error) {
 	return []map[string]any{}, nil
+}
+
+func (d *bufferTestDriver) Ping(_ context.Context, key Key, values map[string]any) error {
+	return nil
+}
+
+func (d *bufferTestDriver) Scan(_ context.Context, key Key) (time.Time, map[string]any, bool, error) {
+	return time.Time{}, nil, false, nil
 }
 
 func (d *bufferTestDriver) Description() string {
@@ -108,10 +117,10 @@ func TestBuffer_FlushesWhenQueueReachesSize(t *testing.T) {
 	now := time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC)
 	key := Key{Key: "metric", Granularity: "1h", At: &now}
 
-	if err := buffer.Inc([]Key{key}, map[string]any{"count": 1}); err != nil {
+	if err := buffer.Inc(context.Background(), []Key{key}, map[string]any{"count": 1}); err != nil {
 		t.Fatalf("first enqueue failed: %v", err)
 	}
-	if err := buffer.Inc([]Key{key}, map[string]any{"count": 2}); err != nil {
+	if err := buffer.Inc(context.Background(), []Key{key}, map[string]any{"count": 2}); err != nil {
 		t.Fatalf("second enqueue failed: %v", err)
 	}
 
@@ -139,8 +148,8 @@ func TestBuffer_AggregatesIncrementsAndPreservesCount(t *testing.T) {
 	now := time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC)
 	key := Key{Key: "metric", Granularity: "1h", At: &now}
 
-	_ = buffer.Inc([]Key{key}, map[string]any{"count": 1, "nested": map[string]any{"requests": 1}})
-	_ = buffer.Inc([]Key{key}, map[string]any{"count": 2, "nested": map[string]any{"requests": 3}})
+	_ = buffer.Inc(context.Background(), []Key{key}, map[string]any{"count": 1, "nested": map[string]any{"requests": 1}})
+	_ = buffer.Inc(context.Background(), []Key{key}, map[string]any{"count": 2, "nested": map[string]any{"requests": 3}})
 	if err := buffer.Flush(); err != nil {
 		t.Fatalf("flush failed: %v", err)
 	}
@@ -177,8 +186,8 @@ func TestBuffer_AggregatesSetKeepingLastValue(t *testing.T) {
 	now := time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC)
 	key := Key{Key: "metric", Granularity: "1h", At: &now}
 
-	_ = buffer.Set([]Key{key}, map[string]any{"state": "processing"})
-	_ = buffer.Set([]Key{key}, map[string]any{"state": "done", "detail": map[string]any{"attempts": 3}})
+	_ = buffer.Set(context.Background(), []Key{key}, map[string]any{"state": "processing"})
+	_ = buffer.Set(context.Background(), []Key{key}, map[string]any{"state": "done", "detail": map[string]any{"attempts": 3}})
 	if err := buffer.Flush(); err != nil {
 		t.Fatalf("flush failed: %v", err)
 	}
@@ -213,7 +222,7 @@ func TestBuffer_FlushesAutomaticallyOnDuration(t *testing.T) {
 
 	now := time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC)
 	key := Key{Key: "metric", Granularity: "1h", At: &now}
-	if err := buffer.Inc([]Key{key}, map[string]any{"count": 1}); err != nil {
+	if err := buffer.Inc(context.Background(), []Key{key}, map[string]any{"count": 1}); err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
 
@@ -236,7 +245,7 @@ func TestBuffer_ShutdownFlushesOutstandingWrites(t *testing.T) {
 
 	now := time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC)
 	key := Key{Key: "metric", Granularity: "1h", At: &now}
-	if err := buffer.Inc([]Key{key}, map[string]any{"count": 7}); err != nil {
+	if err := buffer.Inc(context.Background(), []Key{key}, map[string]any{"count": 7}); err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
 	if err := buffer.Shutdown(); err != nil {
@@ -270,8 +279,8 @@ func TestBuffer_FallsBackToLinearQueueForNonCountDrivers(t *testing.T) {
 
 	now := time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC)
 	key := Key{Key: "metric", Granularity: "1h", At: &now}
-	_ = buffer.Inc([]Key{key}, map[string]any{"count": 1})
-	_ = buffer.Inc([]Key{key}, map[string]any{"count": 2})
+	_ = buffer.Inc(context.Background(), []Key{key}, map[string]any{"count": 1})
+	_ = buffer.Inc(context.Background(), []Key{key}, map[string]any{"count": 2})
 
 	driver.mu.Lock()
 	defer driver.mu.Unlock()
@@ -294,7 +303,7 @@ func TestBuffer_ClosedBufferRejectsEnqueue(t *testing.T) {
 
 	now := time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC)
 	key := Key{Key: "metric", Granularity: "1h", At: &now}
-	if err := buffer.Inc([]Key{key}, map[string]any{"count": 1}); err == nil {
+	if err := buffer.Inc(context.Background(), []Key{key}, map[string]any{"count": 1}); err == nil {
 		t.Fatalf("expected enqueue error after shutdown")
 	}
 }

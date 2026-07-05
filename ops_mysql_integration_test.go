@@ -1,6 +1,7 @@
 package triflestats
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -28,7 +29,7 @@ func TestOpsWithMySQL_BufferEnabledAndDisabled(t *testing.T) {
 	mode := JoinedFull
 	table := fmt.Sprintf("test_stats_go_mysql_ops_%d", time.Now().UnixNano())
 	driver := NewMySQLDriver(db, table, mode)
-	if err := driver.Setup(); err != nil {
+	if err := driver.Setup(context.Background()); err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
 	defer func() {
@@ -46,13 +47,13 @@ func TestOpsWithMySQL_BufferEnabledAndDisabled(t *testing.T) {
 		cfg.BufferDuration = 0
 		cfg.BufferAsync = false
 
-		if err := Track(cfg, "events", at, map[string]any{"count": 1}); err != nil {
+		if err := Track(context.Background(), cfg, "events", at, map[string]any{"count": 1}); err != nil {
 			t.Fatalf("first track failed: %v", err)
 		}
 
 		from := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 		to := time.Date(2025, 2, 1, 11, 59, 59, 0, time.UTC)
-		before, err := Values(cfg, "events", from, to, "1h", false)
+		before, err := Values(context.Background(), cfg, "events", from, to, "1h", false)
 		if err != nil {
 			t.Fatalf("values before flush failed: %v", err)
 		}
@@ -60,11 +61,11 @@ func TestOpsWithMySQL_BufferEnabledAndDisabled(t *testing.T) {
 			t.Fatalf("expected buffered write not yet visible, got %+v", before.Values)
 		}
 
-		if err := Track(cfg, "events", at.Add(10*time.Minute), map[string]any{"count": 1}); err != nil {
+		if err := Track(context.Background(), cfg, "events", at.Add(10*time.Minute), map[string]any{"count": 1}); err != nil {
 			t.Fatalf("second track failed: %v", err)
 		}
 
-		after, err := Values(cfg, "events", from, to, "1h", false)
+		after, err := Values(context.Background(), cfg, "events", from, to, "1h", false)
 		if err != nil {
 			t.Fatalf("values after flush failed: %v", err)
 		}
@@ -83,13 +84,13 @@ func TestOpsWithMySQL_BufferEnabledAndDisabled(t *testing.T) {
 		cfg.Granularities = []string{"1h"}
 		cfg.BufferEnabled = false
 
-		if err := Track(cfg, "events_immediate", at, map[string]any{"count": 1}); err != nil {
+		if err := Track(context.Background(), cfg, "events_immediate", at, map[string]any{"count": 1}); err != nil {
 			t.Fatalf("track failed: %v", err)
 		}
 
 		from := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 		to := time.Date(2025, 2, 1, 11, 59, 59, 0, time.UTC)
-		result, err := Values(cfg, "events_immediate", from, to, "1h", false)
+		result, err := Values(context.Background(), cfg, "events_immediate", from, to, "1h", false)
 		if err != nil {
 			t.Fatalf("values failed: %v", err)
 		}
@@ -122,7 +123,7 @@ func TestOpsWithMySQL_IdentifierModesAndGranularityFiltering(t *testing.T) {
 		t.Run(modeName(mode), func(t *testing.T) {
 			table := fmt.Sprintf("test_stats_go_mysql_modes_%s_%d", modeName(mode), time.Now().UnixNano())
 			driver := NewMySQLDriver(db, table, mode)
-			if err := driver.Setup(); err != nil {
+			if err := driver.Setup(context.Background()); err != nil {
 				t.Fatalf("setup failed: %v", err)
 			}
 			defer func() {
@@ -135,16 +136,16 @@ func TestOpsWithMySQL_IdentifierModesAndGranularityFiltering(t *testing.T) {
 			cfg.TimeZone = "UTC"
 			cfg.Granularities = []string{"1h", "1d", "invalid", "1h"}
 
-			if err := Track(cfg, "events", at, map[string]any{"count": 2}); err != nil {
+			if err := Track(context.Background(), cfg, "events", at, map[string]any{"count": 2}); err != nil {
 				t.Fatalf("track failed: %v", err)
 			}
-			if err := Assert(cfg, "events", at, map[string]any{"status": "ok"}); err != nil {
+			if err := Assert(context.Background(), cfg, "events", at, map[string]any{"status": "ok"}); err != nil {
 				t.Fatalf("assert failed: %v", err)
 			}
 
 			from := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 			to := time.Date(2025, 2, 1, 11, 59, 59, 0, time.UTC)
-			result, err := Values(cfg, "events", from, to, "1h", false)
+			result, err := Values(context.Background(), cfg, "events", from, to, "1h", false)
 			if err != nil {
 				t.Fatalf("values failed: %v", err)
 			}
@@ -157,7 +158,7 @@ func TestOpsWithMySQL_IdentifierModesAndGranularityFiltering(t *testing.T) {
 
 			dayFrom := time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC)
 			dayTo := time.Date(2025, 2, 1, 23, 59, 59, 0, time.UTC)
-			dayResult, err := Values(cfg, "events", dayFrom, dayTo, "1d", false)
+			dayResult, err := Values(context.Background(), cfg, "events", dayFrom, dayTo, "1d", false)
 			if err != nil {
 				t.Fatalf("day values failed: %v", err)
 			}
@@ -165,5 +166,66 @@ func TestOpsWithMySQL_IdentifierModesAndGranularityFiltering(t *testing.T) {
 				t.Fatalf("expected 1d count 2, got %#v", got)
 			}
 		})
+	}
+}
+
+func TestOpsWithMySQL_BeamAndScan(t *testing.T) {
+	dsn := os.Getenv("MYSQL_DSN")
+	if dsn == "" {
+		t.Skip("MYSQL_DSN not set")
+	}
+
+	db, err := sql.Open("mysql", dsn)
+	if err != nil {
+		t.Fatalf("open mysql failed: %v", err)
+	}
+	defer db.Close()
+
+	table := fmt.Sprintf("test_stats_go_my_status_%d", time.Now().UnixNano())
+	driver := NewMySQLDriver(db, table, JoinedSeparated)
+	if err := driver.Setup(context.Background()); err != nil {
+		t.Fatalf("setup failed: %v", err)
+	}
+	defer func() {
+		_, _ = db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS `%s`", table))
+		_, _ = db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS `%s_ping`", table))
+	}()
+
+	cfg := DefaultConfig()
+	cfg.Driver = driver
+	cfg.BufferEnabled = false
+	cfg.TimeZone = "UTC"
+
+	ctx := context.Background()
+	at := time.Date(2025, 2, 1, 11, 35, 0, 0, time.UTC)
+	if err := Beam(ctx, cfg, "jobs::sync", at, map[string]any{"state": "running"}); err != nil {
+		t.Fatalf("beam failed: %v", err)
+	}
+	later := at.Add(20 * time.Minute)
+	if err := Beam(ctx, cfg, "jobs::sync", later, map[string]any{"state": "done"}); err != nil {
+		t.Fatalf("second beam failed: %v", err)
+	}
+
+	result, err := Scan(ctx, cfg, "jobs::sync")
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+	if !result.Found {
+		t.Fatalf("expected status found")
+	}
+	if !result.At.Equal(later) {
+		t.Fatalf("expected at %v, got %v", later, result.At)
+	}
+	data, ok := result.Values["data"].(map[string]any)
+	if !ok || data["state"] != "done" {
+		t.Fatalf("unexpected scan values: %+v", result.Values)
+	}
+
+	missing, err := Scan(ctx, cfg, "jobs::other")
+	if err != nil {
+		t.Fatalf("scan missing failed: %v", err)
+	}
+	if missing.Found {
+		t.Fatalf("expected no status for unknown key")
 	}
 }

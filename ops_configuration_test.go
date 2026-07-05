@@ -1,6 +1,7 @@
 package triflestats
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -8,7 +9,7 @@ import (
 func TestTrackRespectsConfiguredGranularities(t *testing.T) {
 	db := newTestDB(t)
 	driver := NewSQLiteDriver(db, "trifle_stats", JoinedFull)
-	if err := driver.Setup(); err != nil {
+	if err := driver.Setup(context.Background()); err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
 
@@ -19,7 +20,7 @@ func TestTrackRespectsConfiguredGranularities(t *testing.T) {
 	cfg.Granularities = []string{"1h", "1d", "invalid", "1h"}
 
 	at := time.Date(2025, 2, 1, 11, 35, 0, 0, time.UTC)
-	if err := Track(cfg, "events", at, map[string]any{"count": 1}); err != nil {
+	if err := Track(context.Background(), cfg, "events", at, map[string]any{"count": 1}); err != nil {
 		t.Fatalf("track failed: %v", err)
 	}
 
@@ -27,7 +28,7 @@ func TestTrackRespectsConfiguredGranularities(t *testing.T) {
 	dayAt := time.Date(2025, 2, 1, 0, 0, 0, 0, time.UTC)
 	minuteAt := time.Date(2025, 2, 1, 11, 35, 0, 0, time.UTC)
 
-	values, err := driver.Get([]Key{
+	values, err := driver.Get(context.Background(), []Key{
 		{Key: "events", Granularity: "1h", At: &hourAt},
 		{Key: "events", Granularity: "1d", At: &dayAt},
 		{Key: "events", Granularity: "1m", At: &minuteAt},
@@ -52,7 +53,7 @@ func TestTrack_BufferEnabledAndDisabledModes(t *testing.T) {
 	t.Run("buffer enabled", func(t *testing.T) {
 		db := newTestDB(t)
 		driver := NewSQLiteDriver(db, "trifle_stats", JoinedFull)
-		if err := driver.Setup(); err != nil {
+		if err := driver.Setup(context.Background()); err != nil {
 			t.Fatalf("setup failed: %v", err)
 		}
 
@@ -66,13 +67,13 @@ func TestTrack_BufferEnabledAndDisabledModes(t *testing.T) {
 		cfg.BufferDuration = 0
 		cfg.BufferAsync = false
 
-		if err := Track(cfg, "events", at, map[string]any{"count": 1}); err != nil {
+		if err := Track(context.Background(), cfg, "events", at, map[string]any{"count": 1}); err != nil {
 			t.Fatalf("first track failed: %v", err)
 		}
 
 		from := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 		to := time.Date(2025, 2, 1, 11, 59, 59, 0, time.UTC)
-		before, err := Values(cfg, "events", from, to, "1h", false)
+		before, err := Values(context.Background(), cfg, "events", from, to, "1h", false)
 		if err != nil {
 			t.Fatalf("values before flush failed: %v", err)
 		}
@@ -80,11 +81,11 @@ func TestTrack_BufferEnabledAndDisabledModes(t *testing.T) {
 			t.Fatalf("expected buffered write not yet visible, got %+v", before.Values)
 		}
 
-		if err := Track(cfg, "events", at.Add(10*time.Minute), map[string]any{"count": 1}); err != nil {
+		if err := Track(context.Background(), cfg, "events", at.Add(10*time.Minute), map[string]any{"count": 1}); err != nil {
 			t.Fatalf("second track failed: %v", err)
 		}
 
-		after, err := Values(cfg, "events", from, to, "1h", false)
+		after, err := Values(context.Background(), cfg, "events", from, to, "1h", false)
 		if err != nil {
 			t.Fatalf("values after flush failed: %v", err)
 		}
@@ -100,7 +101,7 @@ func TestTrack_BufferEnabledAndDisabledModes(t *testing.T) {
 	t.Run("buffer disabled", func(t *testing.T) {
 		db := newTestDB(t)
 		driver := NewSQLiteDriver(db, "trifle_stats", JoinedFull)
-		if err := driver.Setup(); err != nil {
+		if err := driver.Setup(context.Background()); err != nil {
 			t.Fatalf("setup failed: %v", err)
 		}
 
@@ -110,13 +111,13 @@ func TestTrack_BufferEnabledAndDisabledModes(t *testing.T) {
 		cfg.Granularities = []string{"1h"}
 		cfg.BufferEnabled = false
 
-		if err := Track(cfg, "events", at, map[string]any{"count": 1}); err != nil {
+		if err := Track(context.Background(), cfg, "events", at, map[string]any{"count": 1}); err != nil {
 			t.Fatalf("track failed: %v", err)
 		}
 
 		from := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 		to := time.Date(2025, 2, 1, 11, 59, 59, 0, time.UTC)
-		result, err := Values(cfg, "events", from, to, "1h", false)
+		result, err := Values(context.Background(), cfg, "events", from, to, "1h", false)
 		if err != nil {
 			t.Fatalf("values failed: %v", err)
 		}
@@ -129,7 +130,7 @@ func TestTrack_BufferEnabledAndDisabledModes(t *testing.T) {
 func TestTrack_UntrackedUsesSharedSystemTrackingKey(t *testing.T) {
 	db := newTestDB(t)
 	driver := NewSQLiteDriver(db, "trifle_stats", JoinedFull)
-	if err := driver.Setup(); err != nil {
+	if err := driver.Setup(context.Background()); err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
 
@@ -140,12 +141,12 @@ func TestTrack_UntrackedUsesSharedSystemTrackingKey(t *testing.T) {
 	cfg.Granularities = []string{"1h"}
 
 	at := time.Date(2025, 2, 1, 11, 35, 0, 0, time.UTC)
-	if err := Track(cfg, "events", at, map[string]any{"count": 1}, Untracked()); err != nil {
+	if err := Track(context.Background(), cfg, "events", at, map[string]any{"count": 1}, Untracked()); err != nil {
 		t.Fatalf("track failed: %v", err)
 	}
 
 	bucket := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
-	systemValues, err := driver.Get([]Key{{Key: systemKeyName, Granularity: "1h", At: &bucket}})
+	systemValues, err := driver.Get(context.Background(), []Key{{Key: systemKeyName, Granularity: "1h", At: &bucket}})
 	if err != nil {
 		t.Fatalf("get system values failed: %v", err)
 	}
@@ -162,7 +163,7 @@ func TestTrackAndValues_WorkAcrossIdentifierModes(t *testing.T) {
 		t.Run(modeName(mode), func(t *testing.T) {
 			db := newTestDB(t)
 			driver := NewSQLiteDriver(db, "trifle_stats", mode)
-			if err := driver.Setup(); err != nil {
+			if err := driver.Setup(context.Background()); err != nil {
 				t.Fatalf("setup failed: %v", err)
 			}
 
@@ -173,16 +174,16 @@ func TestTrackAndValues_WorkAcrossIdentifierModes(t *testing.T) {
 			cfg.Granularities = []string{"1h"}
 
 			at := time.Date(2025, 2, 1, 11, 35, 0, 0, time.UTC)
-			if err := Track(cfg, "events", at, map[string]any{"count": 2}); err != nil {
+			if err := Track(context.Background(), cfg, "events", at, map[string]any{"count": 2}); err != nil {
 				t.Fatalf("track failed: %v", err)
 			}
-			if err := Assert(cfg, "events", at, map[string]any{"status": "ok"}); err != nil {
+			if err := Assert(context.Background(), cfg, "events", at, map[string]any{"status": "ok"}); err != nil {
 				t.Fatalf("assert failed: %v", err)
 			}
 
 			from := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 			to := time.Date(2025, 2, 1, 11, 59, 59, 0, time.UTC)
-			result, err := Values(cfg, "events", from, to, "1h", false)
+			result, err := Values(context.Background(), cfg, "events", from, to, "1h", false)
 			if err != nil {
 				t.Fatalf("values failed: %v", err)
 			}
@@ -199,7 +200,7 @@ func TestTrackAndValues_WorkAcrossIdentifierModes(t *testing.T) {
 func TestValues_SkipBlanksAndInvalidGranularity(t *testing.T) {
 	db := newTestDB(t)
 	driver := NewSQLiteDriver(db, "trifle_stats", JoinedFull)
-	if err := driver.Setup(); err != nil {
+	if err := driver.Setup(context.Background()); err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
 
@@ -210,14 +211,14 @@ func TestValues_SkipBlanksAndInvalidGranularity(t *testing.T) {
 	cfg.Granularities = []string{"1h"}
 
 	at := time.Date(2025, 2, 1, 11, 35, 0, 0, time.UTC)
-	if err := Track(cfg, "events", at, map[string]any{"count": 1}); err != nil {
+	if err := Track(context.Background(), cfg, "events", at, map[string]any{"count": 1}); err != nil {
 		t.Fatalf("track failed: %v", err)
 	}
 
 	from := time.Date(2025, 2, 1, 10, 0, 0, 0, time.UTC)
 	to := time.Date(2025, 2, 1, 11, 0, 0, 0, time.UTC)
 
-	withBlanks, err := Values(cfg, "events", from, to, "1h", false)
+	withBlanks, err := Values(context.Background(), cfg, "events", from, to, "1h", false)
 	if err != nil {
 		t.Fatalf("values with blanks failed: %v", err)
 	}
@@ -225,7 +226,7 @@ func TestValues_SkipBlanksAndInvalidGranularity(t *testing.T) {
 		t.Fatalf("expected 2 buckets including blank, got %d", len(withBlanks.Values))
 	}
 
-	skipBlanks, err := Values(cfg, "events", from, to, "1h", true)
+	skipBlanks, err := Values(context.Background(), cfg, "events", from, to, "1h", true)
 	if err != nil {
 		t.Fatalf("values skip blanks failed: %v", err)
 	}
@@ -236,7 +237,7 @@ func TestValues_SkipBlanksAndInvalidGranularity(t *testing.T) {
 		t.Fatalf("expected count 1 in non-blank bucket, got %#v", got)
 	}
 
-	if _, err := Values(cfg, "events", from, to, "invalid", false); err == nil {
+	if _, err := Values(context.Background(), cfg, "events", from, to, "invalid", false); err == nil {
 		t.Fatalf("expected invalid granularity error")
 	}
 }

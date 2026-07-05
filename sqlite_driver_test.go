@@ -1,6 +1,7 @@
 package triflestats
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"reflect"
@@ -41,7 +42,7 @@ func TestSQLiteDriver_Description(t *testing.T) {
 func runSQLiteDriverModeTest(t *testing.T, mode JoinedIdentifier) {
 	db := newTestDB(t)
 	driver := NewSQLiteDriver(db, "trifle_stats", mode)
-	if err := driver.Setup(); err != nil {
+	if err := driver.Setup(context.Background()); err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
 
@@ -55,11 +56,11 @@ func runSQLiteDriverModeTest(t *testing.T, mode JoinedIdentifier) {
 		},
 	}
 
-	if err := driver.Set([]Key{key}, values); err != nil {
+	if err := driver.Set(context.Background(), []Key{key}, values); err != nil {
 		t.Fatalf("set failed: %v", err)
 	}
 
-	got, err := driver.Get([]Key{key})
+	got, err := driver.Get(context.Background(), []Key{key})
 	if err != nil {
 		t.Fatalf("get failed: %v", err)
 	}
@@ -77,10 +78,10 @@ func runSQLiteDriverModeTest(t *testing.T, mode JoinedIdentifier) {
 	}
 
 	// set should not delete other keys
-	if err := driver.Set([]Key{key}, map[string]any{"count": 5}); err != nil {
+	if err := driver.Set(context.Background(), []Key{key}, map[string]any{"count": 5}); err != nil {
 		t.Fatalf("set update failed: %v", err)
 	}
-	got, err = driver.Get([]Key{key})
+	got, err = driver.Get(context.Background(), []Key{key})
 	if err != nil {
 		t.Fatalf("get after set failed: %v", err)
 	}
@@ -95,10 +96,10 @@ func runSQLiteDriverModeTest(t *testing.T, mode JoinedIdentifier) {
 	}
 
 	// inc should add
-	if err := driver.Inc([]Key{key}, map[string]any{"count": 2}); err != nil {
+	if err := driver.Inc(context.Background(), []Key{key}, map[string]any{"count": 2}); err != nil {
 		t.Fatalf("inc failed: %v", err)
 	}
-	got, err = driver.Get([]Key{key})
+	got, err = driver.Get(context.Background(), []Key{key})
 	if err != nil {
 		t.Fatalf("get after inc failed: %v", err)
 	}
@@ -119,19 +120,19 @@ func TestSQLiteDriver_SystemTracking(t *testing.T) {
 		t.Run(modeName(mode), func(t *testing.T) {
 			db := newTestDB(t)
 			driver := NewSQLiteDriver(db, "trifle_stats", mode)
-			if err := driver.Setup(); err != nil {
+			if err := driver.Setup(context.Background()); err != nil {
 				t.Fatalf("setup failed: %v", err)
 			}
 
 			at := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
 			key := Key{Key: "event::logs", Granularity: "1h", At: &at}
 
-			if err := driver.IncCount([]Key{key}, map[string]any{"count": 1}, 3); err != nil {
+			if err := driver.IncCount(context.Background(), []Key{key}, map[string]any{"count": 1}, 3); err != nil {
 				t.Fatalf("inc count failed: %v", err)
 			}
 
 			systemKey := Key{Key: systemKeyName, Granularity: "1h", At: &at}
-			got, err := driver.Get([]Key{systemKey})
+			got, err := driver.Get(context.Background(), []Key{systemKey})
 			if err != nil {
 				t.Fatalf("get system key failed: %v", err)
 			}
@@ -154,7 +155,7 @@ func TestSQLiteDriver_SystemTracking(t *testing.T) {
 func TestSQLiteDriver_StoresRFC3339Timestamp(t *testing.T) {
 	db := newTestDB(t)
 	driver := NewSQLiteDriver(db, "trifle_stats", JoinedSeparated)
-	if err := driver.Setup(); err != nil {
+	if err := driver.Setup(context.Background()); err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
 
@@ -162,7 +163,7 @@ func TestSQLiteDriver_StoresRFC3339Timestamp(t *testing.T) {
 	at := time.Date(2025, 1, 15, 10, 0, 0, 0, loc)
 	key := Key{Key: "event", Granularity: "1d", At: &at}
 
-	if err := driver.Set([]Key{key}, map[string]any{"count": 1}); err != nil {
+	if err := driver.Set(context.Background(), []Key{key}, map[string]any{"count": 1}); err != nil {
 		t.Fatalf("set failed: %v", err)
 	}
 
@@ -183,7 +184,7 @@ func TestSQLiteDriver_StoresRFC3339Timestamp(t *testing.T) {
 func TestSQLiteDriver_GetMatchesZeroMicrosecondRFC3339Variants(t *testing.T) {
 	db := newTestDB(t)
 	driver := NewSQLiteDriver(db, "trifle_stats", JoinedSeparated)
-	if err := driver.Setup(); err != nil {
+	if err := driver.Setup(context.Background()); err != nil {
 		t.Fatalf("setup failed: %v", err)
 	}
 
@@ -199,7 +200,7 @@ func TestSQLiteDriver_GetMatchesZeroMicrosecondRFC3339Variants(t *testing.T) {
 
 	at := time.Date(2025, 1, 15, 10, 0, 0, 0, time.UTC)
 	key := Key{Key: "event", Granularity: "1d", At: &at}
-	got, err := driver.Get([]Key{key})
+	got, err := driver.Get(context.Background(), []Key{key})
 	if err != nil {
 		t.Fatalf("get failed: %v", err)
 	}

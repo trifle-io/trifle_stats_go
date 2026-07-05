@@ -1,6 +1,8 @@
 package triflestats
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -70,28 +72,32 @@ func NewBuffer(driver WriteStorage, opts BufferOptions) *Buffer {
 	return b
 }
 
-// Inc enqueues an increment operation.
-func (b *Buffer) Inc(keys []Key, values map[string]any) error {
+// Inc enqueues an increment operation. The context is accepted for interface
+// compatibility but ignored: writes are dispatched later by Flush.
+func (b *Buffer) Inc(_ context.Context, keys []Key, values map[string]any) error {
 	return b.enqueue("inc", keys, values)
 }
 
-// Set enqueues a set operation.
-func (b *Buffer) Set(keys []Key, values map[string]any) error {
+// Set enqueues a set operation. The context is accepted for interface
+// compatibility but ignored: writes are dispatched later by Flush.
+func (b *Buffer) Set(_ context.Context, keys []Key, values map[string]any) error {
 	return b.enqueue("set", keys, values)
 }
 
-// Flush drains queued operations and writes them to the driver.
+// Flush drains queued operations and writes them to the driver. Every drained
+// action is attempted; failures are collected and returned joined.
 func (b *Buffer) Flush() error {
 	actions := b.drainActions()
 	if len(actions) == 0 {
 		return nil
 	}
+	var errs []error
 	for _, action := range actions {
 		if err := b.dispatchAction(action); err != nil {
-			return err
+			errs = append(errs, err)
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // Shutdown stops the worker and flushes outstanding operations.
@@ -206,12 +212,13 @@ func (b *Buffer) dispatchAction(action bufferedAction) error {
 		action.count = 1
 	}
 
+	ctx := context.Background()
 	if b.countDriver != nil {
 		switch action.operation {
 		case "inc":
-			return b.countDriver.IncCount(action.keys, action.values, action.count)
+			return b.countDriver.IncCount(ctx, action.keys, action.values, action.count)
 		case "set":
-			return b.countDriver.SetCount(action.keys, action.values, action.count)
+			return b.countDriver.SetCount(ctx, action.keys, action.values, action.count)
 		default:
 			return fmt.Errorf("invalid operation: %s", action.operation)
 		}
@@ -221,11 +228,11 @@ func (b *Buffer) dispatchAction(action bufferedAction) error {
 	for i := 0; i < repetitions; i++ {
 		switch action.operation {
 		case "inc":
-			if err := b.driver.Inc(action.keys, action.values); err != nil {
+			if err := b.driver.Inc(ctx, action.keys, action.values); err != nil {
 				return err
 			}
 		case "set":
-			if err := b.driver.Set(action.keys, action.values); err != nil {
+			if err := b.driver.Set(ctx, action.keys, action.values); err != nil {
 				return err
 			}
 		default:

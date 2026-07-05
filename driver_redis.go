@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -35,14 +36,17 @@ func (d *RedisDriver) Description() string {
 }
 
 // Inc increments numeric values in-place.
-func (d *RedisDriver) Inc(keys []Key, values map[string]any) error {
-	return d.IncCount(keys, values, 1)
+func (d *RedisDriver) Inc(ctx context.Context, keys []Key, values map[string]any) error {
+	return d.IncCount(ctx, keys, values, 1)
 }
 
 // IncCount increments values and records system tracking count.
-func (d *RedisDriver) IncCount(keys []Key, values map[string]any, count int64) error {
+func (d *RedisDriver) IncCount(ctx context.Context, keys []Key, values map[string]any, count int64) error {
 	if count <= 0 {
 		count = 1
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if len(keys) == 0 {
 		return nil
@@ -56,37 +60,33 @@ func (d *RedisDriver) IncCount(keys []Key, values map[string]any, count int64) e
 		return nil
 	}
 
-	ctx := context.Background()
-	for _, key := range keys {
-		mainKey := d.joinedKey(key)
-		if err := d.incrementPacked(ctx, mainKey, packed); err != nil {
-			return err
-		}
-
-		if d.SystemTracking {
-			systemKey := Key{
-				Key:         systemKeyName,
-				Granularity: key.Granularity,
-				At:          key.At,
-				TrackingKey: key.TrackingKey,
+	_, err := d.Client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, key := range keys {
+			mainKey := d.joinedKey(key)
+			if err := incrementPackedPipelined(ctx, pipe, mainKey, packed); err != nil {
+				return err
 			}
-			if err := d.incrementPacked(ctx, d.joinedKey(systemKey), systemDataFor(key.SystemTrackingKey(), count)); err != nil {
+			if err := d.trackSystemData(ctx, pipe, key, count); err != nil {
 				return err
 			}
 		}
-	}
-	return nil
+		return nil
+	})
+	return err
 }
 
 // Set writes values without deleting unspecified fields.
-func (d *RedisDriver) Set(keys []Key, values map[string]any) error {
-	return d.SetCount(keys, values, 1)
+func (d *RedisDriver) Set(ctx context.Context, keys []Key, values map[string]any) error {
+	return d.SetCount(ctx, keys, values, 1)
 }
 
 // SetCount writes values and records system tracking count.
-func (d *RedisDriver) SetCount(keys []Key, values map[string]any, count int64) error {
+func (d *RedisDriver) SetCount(ctx context.Context, keys []Key, values map[string]any, count int64) error {
 	if count <= 0 {
 		count = 1
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	if len(keys) == 0 {
 		return nil
@@ -100,31 +100,25 @@ func (d *RedisDriver) SetCount(keys []Key, values map[string]any, count int64) e
 		return nil
 	}
 
-	ctx := context.Background()
 	fields := toRedisFieldValues(packed)
-	for _, key := range keys {
-		mainKey := d.joinedKey(key)
-		if err := d.Client.HSet(ctx, mainKey, fields...).Err(); err != nil {
-			return err
-		}
-
-		if d.SystemTracking {
-			systemKey := Key{
-				Key:         systemKeyName,
-				Granularity: key.Granularity,
-				At:          key.At,
-				TrackingKey: key.TrackingKey,
-			}
-			if err := d.incrementPacked(ctx, d.joinedKey(systemKey), systemDataFor(key.SystemTrackingKey(), count)); err != nil {
+	_, err := d.Client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, key := range keys {
+			mainKey := d.joinedKey(key)
+			pipe.HSet(ctx, mainKey, fields...)
+			if err := d.trackSystemData(ctx, pipe, key, count); err != nil {
 				return err
 			}
 		}
-	}
-	return nil
+		return nil
+	})
+	return err
 }
 
-// Get fetches values for keys in order.
-func (d *RedisDriver) Get(keys []Key) ([]map[string]any, error) {
+// Get fetches values for keys in order using a single pipelined round trip.
+func (d *RedisDriver) Get(ctx context.Context, keys []Key) ([]map[string]any, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(keys) == 0 {
 		return []map[string]any{}, nil
 	}
@@ -132,11 +126,20 @@ func (d *RedisDriver) Get(keys []Key) ([]map[string]any, error) {
 		return nil, fmt.Errorf("redis driver requires Client")
 	}
 
-	ctx := context.Background()
+	cmds := make([]*redis.MapStringStringCmd, 0, len(keys))
+	_, err := d.Client.Pipelined(ctx, func(pipe redis.Pipeliner) error {
+		for _, key := range keys {
+			cmds = append(cmds, pipe.HGetAll(ctx, d.joinedKey(key)))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
 	results := make([]map[string]any, 0, len(keys))
-	for _, key := range keys {
-		mainKey := d.joinedKey(key)
-		raw, err := d.Client.HGetAll(ctx, mainKey).Result()
+	for _, cmd := range cmds {
+		raw, err := cmd.Result()
 		if err != nil {
 			return nil, err
 		}
@@ -149,12 +152,34 @@ func (d *RedisDriver) Get(keys []Key) ([]map[string]any, error) {
 	return results, nil
 }
 
+// Ping is a no-op for Redis, mirroring the Ruby driver.
+func (d *RedisDriver) Ping(ctx context.Context, key Key, values map[string]any) error {
+	return nil
+}
+
+// Scan is a no-op for Redis, mirroring the Ruby driver.
+func (d *RedisDriver) Scan(ctx context.Context, key Key) (time.Time, map[string]any, bool, error) {
+	return time.Time{}, nil, false, nil
+}
+
+func (d *RedisDriver) trackSystemData(ctx context.Context, pipe redis.Pipeliner, key Key, count int64) error {
+	if !d.SystemTracking {
+		return nil
+	}
+	systemKey := Key{
+		Key:         systemKeyName,
+		Granularity: key.Granularity,
+		At:          key.At,
+	}
+	return incrementPackedPipelined(ctx, pipe, d.joinedKey(systemKey), systemDataFor(key.SystemTrackingKey(), count))
+}
+
 func (d *RedisDriver) joinedKey(key Key) string {
 	key.Prefix = d.Prefix
 	return key.Join(d.Separator)
 }
 
-func (d *RedisDriver) incrementPacked(ctx context.Context, redisKey string, packed map[string]any) error {
+func incrementPackedPipelined(ctx context.Context, pipe redis.Pipeliner, redisKey string, packed map[string]any) error {
 	fields := make([]string, 0, len(packed))
 	for field := range packed {
 		fields = append(fields, field)
@@ -169,14 +194,10 @@ func (d *RedisDriver) incrementPacked(ctx context.Context, redisKey string, pack
 		}
 
 		if math.Mod(delta, 1) == 0 {
-			if err := d.Client.HIncrBy(ctx, redisKey, field, int64(delta)).Err(); err != nil {
-				return err
-			}
+			pipe.HIncrBy(ctx, redisKey, field, int64(delta))
 			continue
 		}
-		if err := d.Client.HIncrByFloat(ctx, redisKey, field, delta).Err(); err != nil {
-			return err
-		}
+		pipe.HIncrByFloat(ctx, redisKey, field, delta)
 	}
 	return nil
 }
