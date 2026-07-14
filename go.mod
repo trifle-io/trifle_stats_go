@@ -1,4 +1,4 @@
-module github.com/trifle-io/trifle_stats_go
+module github.com/trifle-io/trifle_stats_go/v2
 
 go 1.24.0
 
