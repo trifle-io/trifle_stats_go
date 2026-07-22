@@ -50,6 +50,7 @@ _ = timeline
 
 | Driver | Backend | Best for |
 |--------|---------|----------|
+| **API** | Trifle Cloud Projects | Hosted metrics without your own database |
 | **PostgreSQL** | JSONB upsert | Most production apps |
 | **MySQL** | JSON column | MySQL shops |
 | **SQLite** | JSON1 extension | Single-binary apps, dev/test |

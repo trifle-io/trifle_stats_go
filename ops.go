@@ -49,8 +49,7 @@ func trackOrAssert(ctx context.Context, cfg *Config, key string, at time.Time, v
 	if cfg == nil {
 		return fmt.Errorf("config required")
 	}
-	storage := cfg.Storage()
-	if storage == nil {
+	if cfg.Driver == nil {
 		return fmt.Errorf("config driver required")
 	}
 
@@ -59,6 +58,16 @@ func trackOrAssert(ctx context.Context, cfg *Config, key string, at time.Time, v
 		if opt != nil {
 			opt(&optState)
 		}
+	}
+
+	if driver, ok := cfg.Driver.(DirectWriter); ok {
+		operation := map[string]string{"inc": "track", "set": "assert"}[op]
+		return driver.DirectWrite(ctx, operation, key, at, values, optState.trackingKey == untrackedKeyName)
+	}
+
+	storage := cfg.Storage()
+	if storage == nil {
+		return fmt.Errorf("config driver required")
 	}
 
 	granularities := cfg.EffectiveGranularities()

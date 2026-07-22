@@ -47,6 +47,17 @@ type WriteStorage interface {
 	Set(ctx context.Context, keys []Key, values map[string]any) error
 }
 
+// DirectWriter receives high-level writes before local time bucketing. Remote
+// drivers use this to let the server apply its authoritative configuration.
+type DirectWriter interface {
+	DirectWrite(ctx context.Context, operation, key string, at time.Time, values map[string]any, untracked bool) error
+}
+
+// BufferBypassDriver marks drivers whose writes must never enter the local buffer.
+type BufferBypassDriver interface {
+	BypassBuffer() bool
+}
+
 // CountDriver extends drivers with operation-count-aware writes, used by Buffer
 // to preserve system tracking counts when multiple operations are aggregated.
 type CountDriver interface {

@@ -100,6 +100,10 @@ func (c *Config) Storage() WriteStorage {
 		c.shutdownBufferLocked()
 		return nil
 	}
+	if driver, ok := c.Driver.(BufferBypassDriver); ok && driver.BypassBuffer() {
+		c.shutdownBufferLocked()
+		return c.Driver
+	}
 
 	if c.buffer != nil && c.buffer.matches(c.Driver, c.BufferDuration, c.BufferSize, c.BufferAggregate, c.BufferAsync) {
 		return c.storage
