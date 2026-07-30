@@ -2,6 +2,7 @@ package triflestats
 
 import (
 	"fmt"
+	"sort"
 	"time"
 )
 
@@ -102,7 +103,8 @@ func Timeline(from, to time.Time, offset int, unit Unit, cfg *Config) []time.Tim
 
 	for t := start; !t.After(end); {
 		list = append(list, t)
-		t = NewNocturnal(t, cfg).Add(offset, unit)
+		candidate := NewNocturnal(t, cfg).Add(offset, unit)
+		t = NewNocturnal(candidate, cfg).Floor(offset, unit)
 	}
 	return list
 }
@@ -122,9 +124,9 @@ func (n *Nocturnal) Add(offset int, unit Unit) time.Time {
 	case UnitHour:
 		return t.Add(time.Duration(offset) * time.Hour)
 	case UnitDay:
-		return t.AddDate(0, 0, offset)
+		return addCalendarDays(t, offset)
 	case UnitWeek:
-		return t.AddDate(0, 0, offset*7)
+		return addCalendarDays(t, offset*7)
 	case UnitMonth:
 		return addMonths(t, offset)
 	case UnitQuarter:
@@ -143,50 +145,56 @@ func (n *Nocturnal) Floor(offset int, unit Unit) time.Time {
 	}
 
 	t := n.ensureLocation(n.Time)
-	loc := t.Location()
 
 	switch unit {
 	case UnitSecond:
 		floored := (t.Second() / offset) * offset
-		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), floored, 0, loc)
+		elapsed := time.Duration(t.Second()-floored)*time.Second + time.Duration(t.Nanosecond())
+		return t.Add(-elapsed)
 	case UnitMinute:
 		floored := (t.Minute() / offset) * offset
-		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), floored, 0, 0, loc)
+		elapsed := time.Duration(t.Minute()-floored)*time.Minute +
+			time.Duration(t.Second())*time.Second +
+			time.Duration(t.Nanosecond())
+		return t.Add(-elapsed)
 	case UnitHour:
-		floored := (t.Hour() / offset) * offset
-		return time.Date(t.Year(), t.Month(), t.Day(), floored, 0, 0, 0, loc)
+		dayStart := resolveLocal(t, t.Year(), t.Month(), t.Day(), 0, 0, 0, 0)
+		segment := time.Duration(offset) * time.Hour
+		elapsed := t.Sub(dayStart)
+		return dayStart.Add((elapsed / segment) * segment)
 	case UnitDay:
 		dayOfYear := t.YearDay() - 1
 		flooredDays := (dayOfYear / offset) * offset
-		yearStart := time.Date(t.Year(), 1, 1, 0, 0, 0, 0, loc)
-		return yearStart.AddDate(0, 0, flooredDays)
+		date := time.Date(t.Year(), 1, 1+flooredDays, 0, 0, 0, 0, time.UTC)
+		return resolveLocal(t, date.Year(), date.Month(), date.Day(), 0, 0, 0, 0)
 	case UnitWeek:
-		yearStart := time.Date(t.Year(), 1, 1, 0, 0, 0, 0, loc)
+		yearStart := time.Date(t.Year(), 1, 1, 0, 0, 0, 0, time.UTC)
 		weekStartOffset := daysIntoWeek(n.configBeginningOfWeek())
 		yearStartWday := int(yearStart.Weekday())
 		daysToFirst := mod(weekStartOffset-yearStartWday, 7)
 		firstWeekStart := yearStart.AddDate(0, 0, daysToFirst)
 
-		if t.Before(firstWeekStart) {
-			return yearStart
+		currentDate := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC)
+		if currentDate.Before(firstWeekStart) {
+			return resolveLocal(t, yearStart.Year(), yearStart.Month(), yearStart.Day(), 0, 0, 0, 0)
 		}
 
-		diff := t.Sub(firstWeekStart)
-		weeksSinceFirst := int(diff.Hours() / (24 * 7))
+		weeksSinceFirst := daysBetween(firstWeekStart, currentDate) / 7
 		flooredWeeks := (weeksSinceFirst / offset) * offset
-		return firstWeekStart.AddDate(0, 0, flooredWeeks*7)
+		date := firstWeekStart.AddDate(0, 0, flooredWeeks*7)
+		return resolveLocal(t, date.Year(), date.Month(), date.Day(), 0, 0, 0, 0)
 	case UnitMonth:
 		monthsFromJan := int(t.Month()) - 1
 		floored := (monthsFromJan / offset) * offset
-		return time.Date(t.Year(), time.Month(floored+1), 1, 0, 0, 0, 0, loc)
+		return resolveLocal(t, t.Year(), time.Month(floored+1), 1, 0, 0, 0, 0)
 	case UnitQuarter:
 		currentQuarter := (int(t.Month()) - 1) / 3
 		floored := (currentQuarter / offset) * offset
 		month := floored*3 + 1
-		return time.Date(t.Year(), time.Month(month), 1, 0, 0, 0, 0, loc)
+		return resolveLocal(t, t.Year(), time.Month(month), 1, 0, 0, 0, 0)
 	case UnitYear:
 		floored := (t.Year() / offset) * offset
-		return time.Date(floored, 1, 1, 0, 0, 0, 0, loc)
+		return resolveLocal(t, floored, 1, 1, 0, 0, 0, 0)
 	default:
 		panic(fmt.Sprintf("invalid unit: %v", unit))
 	}
@@ -247,7 +255,7 @@ func addMonths(t time.Time, months int) time.Time {
 	if day > maxDay {
 		day = maxDay
 	}
-	return time.Date(newYear, time.Month(newMonth), day, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
+	return resolveLocal(t, newYear, time.Month(newMonth), day, t.Hour(), t.Minute(), t.Second(), t.Nanosecond())
 }
 
 func addYears(t time.Time, years int) time.Time {
@@ -257,7 +265,107 @@ func addYears(t time.Time, years int) time.Time {
 	if day > maxDay {
 		day = maxDay
 	}
-	return time.Date(newYear, t.Month(), day, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
+	return resolveLocal(t, newYear, t.Month(), day, t.Hour(), t.Minute(), t.Second(), t.Nanosecond())
+}
+
+func addCalendarDays(t time.Time, days int) time.Time {
+	date := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.UTC).AddDate(0, 0, days)
+	return resolveLocal(t, date.Year(), date.Month(), date.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond())
+}
+
+type zonePeriod struct {
+	start  time.Time
+	offset int
+}
+
+func resolveLocal(source time.Time, year int, month time.Month, day, hour, minute, second, nanosecond int) time.Time {
+	loc := source.Location()
+	wall := time.Date(year, month, day, hour, minute, second, nanosecond, time.UTC)
+	periods := zonePeriodsAround(wall, loc)
+	candidates := localCandidates(wall, loc, periods)
+	_, sourceOffset := source.Zone()
+
+	if len(candidates) > 0 {
+		for _, candidate := range candidates {
+			_, candidateOffset := candidate.Zone()
+			if candidateOffset == sourceOffset {
+				return candidate
+			}
+		}
+		return candidates[0]
+	}
+
+	for i := 1; i < len(periods); i++ {
+		previous := periods[i-1]
+		next := periods[i]
+		if next.offset <= previous.offset {
+			continue
+		}
+		gapStart := next.start.Add(time.Duration(previous.offset) * time.Second)
+		gapEnd := next.start.Add(time.Duration(next.offset) * time.Second)
+		if !wall.Before(gapStart) && wall.Before(gapEnd) {
+			gap := time.Duration(next.offset-previous.offset) * time.Second
+			shifted := wall.Add(gap)
+			return resolveLocal(
+				source,
+				shifted.Year(), shifted.Month(), shifted.Day(),
+				shifted.Hour(), shifted.Minute(), shifted.Second(), shifted.Nanosecond(),
+			)
+		}
+	}
+
+	return time.Date(year, month, day, hour, minute, second, nanosecond, loc)
+}
+
+func zonePeriodsAround(wall time.Time, loc *time.Location) []zonePeriod {
+	lower := wall.Add(-48 * time.Hour)
+	upper := wall.Add(48 * time.Hour)
+	cursor := lower
+	periods := make([]zonePeriod, 0, 4)
+
+	for !cursor.After(upper) {
+		local := cursor.In(loc)
+		_, offset := local.Zone()
+		start, end := local.ZoneBounds()
+		periods = append(periods, zonePeriod{start: start, offset: offset})
+		if end.IsZero() || !end.Before(upper) {
+			break
+		}
+		cursor = end.Add(time.Nanosecond)
+	}
+	return periods
+}
+
+func localCandidates(wall time.Time, loc *time.Location, periods []zonePeriod) []time.Time {
+	seen := map[int]bool{}
+	candidates := make([]time.Time, 0, 2)
+
+	for _, period := range periods {
+		if seen[period.offset] {
+			continue
+		}
+		seen[period.offset] = true
+		candidate := wall.Add(-time.Duration(period.offset) * time.Second).In(loc)
+		if sameWallTime(candidate, wall) {
+			candidates = append(candidates, candidate)
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Before(candidates[j]) })
+	return candidates
+}
+
+func sameWallTime(local, wall time.Time) bool {
+	return local.Year() == wall.Year() &&
+		local.Month() == wall.Month() &&
+		local.Day() == wall.Day() &&
+		local.Hour() == wall.Hour() &&
+		local.Minute() == wall.Minute() &&
+		local.Second() == wall.Second() &&
+		local.Nanosecond() == wall.Nanosecond()
+}
+
+func daysBetween(from, to time.Time) int {
+	return int(to.Sub(from) / (24 * time.Hour))
 }
 
 func daysInMonth(year int, month time.Month) int {
