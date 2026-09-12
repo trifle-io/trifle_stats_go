@@ -129,6 +129,7 @@ func flattenNumericPaths(value any, prefix string, out map[string]struct{}) {
 }
 
 func joinPath(prefix, key string) string {
+	key = EscapePathSegment(key)
 	if prefix == "" {
 		return key
 	}

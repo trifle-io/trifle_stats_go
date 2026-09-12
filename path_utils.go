@@ -131,15 +131,6 @@ func fetchPath(data any, segments []string) any {
 	return current
 }
 
-func hasWildcard(segments []string) bool {
-	for _, segment := range segments {
-		if segment == "*" {
-			return true
-		}
-	}
-	return false
-}
-
 func mapTarget(values []map[string]any, segments []string) bool {
 	for _, value := range values {
 		if node, ok := fetchPath(value, segments).(map[string]any); ok && node != nil {

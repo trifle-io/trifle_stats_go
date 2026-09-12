@@ -3,6 +3,7 @@ package triflestats
 import (
 	"encoding/json"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 )
@@ -62,6 +63,27 @@ func TestSeriesNormalizesNumericStrings(t *testing.T) {
 	}
 	if _, ok := series.Values[0]["label"].(string); !ok {
 		t.Fatalf("expected label to remain string")
+	}
+}
+
+func TestSeriesAvailablePathsPreservesLiteralNames(t *testing.T) {
+	series := NewSeries(nil, []map[string]any{{
+		"jobs": map[string]any{
+			"test.rb": 2, "test": map[string]any{"rb": 1}, "*": 3,
+			`file\name`: 4, "percent%2E": 5, "label": "not numeric",
+		},
+		"samples.rb": []any{map[string]any{"*": 6}},
+	}})
+	want := []string{`jobs.test\.rb`, "jobs.test.rb", `jobs.\*`, `jobs.file\\name`, "jobs.percent%2E", `samples\.rb.0.\*`}
+	sort.Strings(want)
+	paths := series.AvailablePaths()
+	if !reflect.DeepEqual(paths, want) {
+		t.Fatalf("available paths: %#v != %#v", paths, want)
+	}
+	for _, path := range paths {
+		if PathHasWildcard(path) || FetchPath(series.Values[0], path) == nil {
+			t.Fatalf("discovered path does not select a concrete value: %q", path)
+		}
 	}
 }
 
