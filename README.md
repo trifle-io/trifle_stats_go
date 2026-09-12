@@ -172,3 +172,9 @@ Bug reports and pull requests are welcome on GitHub at https://github.com/trifle
 ## License
 
 Available under the terms of the [MIT License](https://opensource.org/licenses/MIT).
+
+## Escaped value paths (unreleased)
+
+`jobs.test.rb` still means nested fields. Use `jobs.test\.rb` for a field named `test.rb` and `jobs.\*` for a literal star. Returned maps contain literal names; generated selectors escape them. Formatters retain wildcard expansion, while expression transponders reject real wildcard paths but accept escaped stars. Driver storage encoding is internal, not URL escaping.
+
+See [Value paths](https://docs.trifle.io/trifle-stats-go/guides/paths) for language-specific construction and JSON examples. Upgrade all writers/readers together: there is no format flag, migration, or compatibility guarantee for historical percent/backslash names. Version selection and publication are pending.

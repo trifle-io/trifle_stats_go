@@ -159,7 +159,7 @@ func (d *MongoDriver) Get(ctx context.Context, keys []Key) ([]map[string]any, er
 		if !ok || data == nil {
 			data = map[string]any{}
 		}
-		resultMap[lookup] = data
+		resultMap[lookup] = DecodeTree(data)
 	}
 	if err := cursor.Err(); err != nil {
 		return nil, err
@@ -243,7 +243,7 @@ func (d *MongoDriver) Scan(ctx context.Context, key Key) (time.Time, map[string]
 	if !ok || data == nil {
 		data = map[string]any{}
 	}
-	return at, data, true, nil
+	return at, DecodeTree(data), true, nil
 }
 
 func (d *MongoDriver) writeWithOperation(ctx context.Context, keys []Key, values map[string]any, op string, count int64) error {

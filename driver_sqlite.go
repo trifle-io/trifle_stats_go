@@ -370,7 +370,7 @@ func systemDataFor(key string, count int64) map[string]any {
 	return Pack(map[string]any{
 		"count": count,
 		"keys": map[string]any{
-			key: count,
+			EscapePathSegment(key): count,
 		},
 	})
 }
@@ -515,8 +515,9 @@ func normalizeSQLiteAtForLookup(value string) string {
 }
 
 func jsonPathForKey(key string) string {
-	escaped := strings.ReplaceAll(key, "'", "''")
-	return fmt.Sprintf("$.%s", escaped)
+	// Packed keys are single JSON object fields, even when they contain dots.
+	quoted, _ := json.Marshal(key)
+	return "$." + strings.ReplaceAll(string(quoted), "'", "''")
 }
 
 func (d *SQLiteDriver) applyPragmas(ctx context.Context) error {

@@ -157,7 +157,7 @@ func TestPostgresDriver_SetIncGet_WithMockedDB(t *testing.T) {
 	joinedKey := key.Join("::")
 
 	setQuery := "INSERT INTO test_stats (key, data) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET data = " +
-		"jsonb_set(jsonb_set(to_jsonb(test_stats.data), '{count}', $3::jsonb), '{meta.duration}', $4::jsonb);"
+		"jsonb_set(jsonb_set(to_jsonb(test_stats.data), ARRAY['count'], $3::jsonb), ARRAY['meta.duration'], $4::jsonb);"
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(setQuery)).
 		WithArgs(joinedKey, jsonArgMatcher{validate: func(data map[string]any) bool {
@@ -171,7 +171,7 @@ func TestPostgresDriver_SetIncGet_WithMockedDB(t *testing.T) {
 	}
 
 	incQuery := "INSERT INTO test_stats (key, data) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET data = " +
-		"jsonb_set(to_jsonb(test_stats.data), '{count}', (COALESCE(test_stats.data->>'count', '0')::numeric + 2)::text::jsonb);"
+		"jsonb_set(to_jsonb(test_stats.data), ARRAY['count'], (COALESCE(test_stats.data->>'count', '0')::numeric + 2)::text::jsonb);"
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(incQuery)).
 		WithArgs(joinedKey, jsonArgMatcher{validate: func(data map[string]any) bool {
@@ -227,10 +227,10 @@ func TestPostgresDriver_IncCountPropagatesSystemTrackingCount(t *testing.T) {
 	}
 
 	mainQuery := "INSERT INTO test_stats (key, granularity, at, data) VALUES ($1, $2, $3, $4) ON CONFLICT (key, granularity, at) DO UPDATE SET data = " +
-		"jsonb_set(to_jsonb(test_stats.data), '{count}', (COALESCE(test_stats.data->>'count', '0')::numeric + 2)::text::jsonb);"
+		"jsonb_set(to_jsonb(test_stats.data), ARRAY['count'], (COALESCE(test_stats.data->>'count', '0')::numeric + 2)::text::jsonb);"
 	systemQuery := "INSERT INTO test_stats (key, granularity, at, data) VALUES ($1, $2, $3, $4) ON CONFLICT (key, granularity, at) DO UPDATE SET data = " +
-		"jsonb_set(jsonb_set(to_jsonb(test_stats.data), '{count}', (COALESCE(test_stats.data->>'count', '0')::numeric + 3)::text::jsonb), " +
-		"'{keys.__untracked__}', (COALESCE(test_stats.data->>'keys.__untracked__', '0')::numeric + 3)::text::jsonb);"
+		"jsonb_set(jsonb_set(to_jsonb(test_stats.data), ARRAY['count'], (COALESCE(test_stats.data->>'count', '0')::numeric + 3)::text::jsonb), " +
+		"ARRAY['keys.__untracked__'], (COALESCE(test_stats.data->>'keys.__untracked__', '0')::numeric + 3)::text::jsonb);"
 
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(mainQuery)).

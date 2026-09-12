@@ -114,7 +114,7 @@ func (d *ProcessDriver) Ping(_ context.Context, key Key, values map[string]any) 
 	defer d.mu.Unlock()
 	d.statuses[key.Key] = processStatus{
 		at:     at,
-		values: cloneMap(values),
+		values: Pack(values),
 	}
 	return nil
 }
@@ -128,5 +128,5 @@ func (d *ProcessDriver) Scan(_ context.Context, key Key) (time.Time, map[string]
 	if !ok {
 		return time.Time{}, nil, false, nil
 	}
-	return status.at, cloneMap(status.values), true, nil
+	return status.at, Unpack(cloneMap(status.values)), true, nil
 }

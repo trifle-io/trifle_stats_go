@@ -88,7 +88,7 @@ func compileExpression(paths []string, expression, response string) ([]string, [
 		return nil, nil, nil, fmt.Errorf("response path is required")
 	}
 
-	if containsWildcard(normalizedPaths) || strings.Contains(trimmedResponse, "*") {
+	if containsWildcard(normalizedPaths) || PathHasWildcard(trimmedResponse) {
 		return nil, nil, nil, fmt.Errorf("wildcard paths are not supported yet")
 	}
 
@@ -136,7 +136,7 @@ func normalizeExpressionPaths(paths []string) ([]string, error) {
 
 func containsWildcard(paths []string) bool {
 	for _, path := range paths {
-		if strings.Contains(path, "*") {
+		if PathHasWildcard(path) {
 			return true
 		}
 	}

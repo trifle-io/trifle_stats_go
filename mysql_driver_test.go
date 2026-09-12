@@ -117,9 +117,9 @@ func TestMySQLDriver_SetIncGet_WithMockedDB(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(
-		`INSERT INTO `+"`test_stats`"+` (`+"`key`"+`, `+"`data`"+`) VALUES (?, CAST(? AS JSON)) ON DUPLICATE KEY UPDATE `+"`data`"+` = JSON_SET(COALESCE(`+"`data`"+`, JSON_OBJECT()), '$."count"', CAST(? AS JSON), '$."meta.duration"', CAST(? AS JSON));`,
+		`INSERT INTO `+"`test_stats`"+` (`+"`key`"+`, `+"`data`"+`) VALUES (?, CAST(? AS JSON)) ON DUPLICATE KEY UPDATE `+"`data`"+` = JSON_SET(COALESCE(`+"`data`"+`, JSON_OBJECT()), ?, CAST(? AS JSON), ?, CAST(? AS JSON));`,
 	)).
-		WithArgs(joinedKey, sqlmock.AnyArg(), "1", "2").
+		WithArgs(joinedKey, sqlmock.AnyArg(), `$."count"`, "1", `$."meta.duration"`, "2").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -129,9 +129,9 @@ func TestMySQLDriver_SetIncGet_WithMockedDB(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(
-		`INSERT INTO `+"`test_stats`"+` (`+"`key`"+`, `+"`data`"+`) VALUES (?, CAST(? AS JSON)) ON DUPLICATE KEY UPDATE `+"`data`"+` = JSON_SET(COALESCE(`+"`data`"+`, JSON_OBJECT()), '$."count"', (COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(COALESCE(`+"`data`"+`, JSON_OBJECT()), '$."count"')) AS DECIMAL(65,10)), 0) + CAST(? AS DECIMAL(65,10))));`,
+		`INSERT INTO `+"`test_stats`"+` (`+"`key`"+`, `+"`data`"+`) VALUES (?, CAST(? AS JSON)) ON DUPLICATE KEY UPDATE `+"`data`"+` = JSON_SET(COALESCE(`+"`data`"+`, JSON_OBJECT()), ?, (COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(COALESCE(`+"`data`"+`, JSON_OBJECT()), ?)) AS DECIMAL(65,10)), 0) + CAST(? AS DECIMAL(65,10))));`,
 	)).
-		WithArgs(joinedKey, sqlmock.AnyArg(), float64(2)).
+		WithArgs(joinedKey, sqlmock.AnyArg(), `$."count"`, `$."count"`, float64(2)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -183,18 +183,18 @@ func TestMySQLDriver_IncCountPropagatesSystemTrackingCount(t *testing.T) {
 
 	mock.ExpectBegin()
 	mock.ExpectExec(regexp.QuoteMeta(
-		`INSERT INTO `+"`test_stats`"+` (`+"`key`"+`, `+"`granularity`"+`, `+"`at`"+`, `+"`data`"+`) VALUES (?, ?, ?, CAST(? AS JSON)) ON DUPLICATE KEY UPDATE `+"`data`"+` = JSON_SET(COALESCE(`+"`data`"+`, JSON_OBJECT()), '$."count"', (COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(COALESCE(`+"`data`"+`, JSON_OBJECT()), '$."count"')) AS DECIMAL(65,10)), 0) + CAST(? AS DECIMAL(65,10))));`,
+		`INSERT INTO `+"`test_stats`"+` (`+"`key`"+`, `+"`granularity`"+`, `+"`at`"+`, `+"`data`"+`) VALUES (?, ?, ?, CAST(? AS JSON)) ON DUPLICATE KEY UPDATE `+"`data`"+` = JSON_SET(COALESCE(`+"`data`"+`, JSON_OBJECT()), ?, (COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(COALESCE(`+"`data`"+`, JSON_OBJECT()), ?)) AS DECIMAL(65,10)), 0) + CAST(? AS DECIMAL(65,10))));`,
 	)).
 		WithArgs("events", "1h", formatMySQLAt(at), jsonArgMatcher{validate: func(data map[string]any) bool {
 			return data["count"] == float64(2)
-		}}, float64(2)).
+		}}, `$."count"`, `$."count"`, float64(2)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(regexp.QuoteMeta(
-		`INSERT INTO `+"`test_stats`"+` (`+"`key`"+`, `+"`granularity`"+`, `+"`at`"+`, `+"`data`"+`) VALUES (?, ?, ?, CAST(? AS JSON)) ON DUPLICATE KEY UPDATE `+"`data`"+` = JSON_SET(COALESCE(`+"`data`"+`, JSON_OBJECT()), '$."count"', (COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(COALESCE(`+"`data`"+`, JSON_OBJECT()), '$."count"')) AS DECIMAL(65,10)), 0) + CAST(? AS DECIMAL(65,10))), '$."keys.__untracked__"', (COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(COALESCE(`+"`data`"+`, JSON_OBJECT()), '$."keys.__untracked__"')) AS DECIMAL(65,10)), 0) + CAST(? AS DECIMAL(65,10))));`,
+		`INSERT INTO `+"`test_stats`"+` (`+"`key`"+`, `+"`granularity`"+`, `+"`at`"+`, `+"`data`"+`) VALUES (?, ?, ?, CAST(? AS JSON)) ON DUPLICATE KEY UPDATE `+"`data`"+` = JSON_SET(COALESCE(`+"`data`"+`, JSON_OBJECT()), ?, (COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(COALESCE(`+"`data`"+`, JSON_OBJECT()), ?)) AS DECIMAL(65,10)), 0) + CAST(? AS DECIMAL(65,10))), ?, (COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(COALESCE(`+"`data`"+`, JSON_OBJECT()), ?)) AS DECIMAL(65,10)), 0) + CAST(? AS DECIMAL(65,10))));`,
 	)).
 		WithArgs(systemKeyName, "1h", formatMySQLAt(at), jsonArgMatcher{validate: func(data map[string]any) bool {
 			return data["count"] == float64(3) && data["keys.__untracked__"] == float64(3)
-		}}, float64(3), float64(3)).
+		}}, `$."count"`, `$."count"`, float64(3), `$."keys.__untracked__"`, `$."keys.__untracked__"`, float64(3)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

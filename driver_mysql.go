@@ -404,19 +404,15 @@ func buildMySQLJSONExpression(packed map[string]any, op string) (string, []any, 
 			if !ok {
 				return "", nil, fmt.Errorf("increment requires numeric value for key %q", key)
 			}
-			expr += fmt.Sprintf(
-				", '%s', (COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(COALESCE(`data`, JSON_OBJECT()), '%s')) AS DECIMAL(65,10)), 0) + CAST(? AS DECIMAL(65,10)))",
-				path,
-				path,
-			)
-			args = append(args, delta)
+			expr += ", ?, (COALESCE(CAST(JSON_UNQUOTE(JSON_EXTRACT(COALESCE(`data`, JSON_OBJECT()), ?)) AS DECIMAL(65,10)), 0) + CAST(? AS DECIMAL(65,10)))"
+			args = append(args, path, path, delta)
 		case "set":
 			encoded, err := json.Marshal(packed[key])
 			if err != nil {
 				return "", nil, err
 			}
-			expr += fmt.Sprintf(", '%s', CAST(? AS JSON)", path)
-			args = append(args, string(encoded))
+			expr += ", ?, CAST(? AS JSON)"
+			args = append(args, path, string(encoded))
 		default:
 			return "", nil, fmt.Errorf("invalid operation: %s", op)
 		}
@@ -507,10 +503,8 @@ func normalizeMySQLQueryValue(value any) any {
 }
 
 func mysqlJSONPathForKey(key string) string {
-	escaped := strings.ReplaceAll(key, "\\", "\\\\")
-	escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
-	escaped = strings.ReplaceAll(escaped, "'", "''")
-	return fmt.Sprintf("$.\"%s\"", escaped)
+	quoted, _ := json.Marshal(key)
+	return "$." + string(quoted)
 }
 
 func quoteMySQLIdentifier(identifier string) string {

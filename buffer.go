@@ -132,6 +132,8 @@ func (b *Buffer) enqueue(operation string, keys []Key, values map[string]any) er
 	}
 
 	shouldFlush := false
+	// Canonicalize logical fields before merging alternate public path spellings.
+	values = EscapePathKeys(Unpack(Pack(values)))
 	b.mu.Lock()
 	if b.closed {
 		b.mu.Unlock()

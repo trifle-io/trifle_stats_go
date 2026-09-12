@@ -3,47 +3,57 @@ package triflestats
 import (
 	"sort"
 	"strconv"
-	"strings"
 )
 
-// SplitPath splits a dotted path into segments.
+// SplitPath returns literal decoded segments for a concrete path.
 func SplitPath(path string) []string {
-	trimmed := strings.TrimSpace(path)
-	if trimmed == "" {
-		return []string{}
-	}
-	parts := strings.Split(trimmed, ".")
+	parts := ParsePath(path)
 	out := make([]string, 0, len(parts))
 	for _, part := range parts {
-		if part == "" {
-			continue
-		}
-		out = append(out, part)
+		out = append(out, part.Value)
 	}
 	return out
 }
 
-// ResolveConcretePaths expands wildcard paths and map targets into concrete paths.
+// ResolveConcretePaths interprets every segment equal to "*" as a wildcard.
+// Deprecated: use ResolveSelectorPaths(values, ParsePath(path)) to retain the
+// distinction between escaped literal stars and wildcard tokens. Do not pass
+// SplitPath(path) here when the selector may contain escaped stars.
 func ResolveConcretePaths(values []map[string]any, segments []string) [][]string {
-	if hasWildcard(segments) {
+	selector := make([]PathSegment, len(segments))
+	for i, segment := range segments {
+		selector[i] = PathSegment{Value: segment, Wildcard: segment == "*"}
+	}
+	return ResolveSelectorPaths(values, selector)
+}
+
+// ResolveSelectorPaths expands parsed selectors, preserving escaped literal stars.
+func ResolveSelectorPaths(values []map[string]any, segments []PathSegment) [][]string {
+	literals := make([]string, len(segments))
+	wildcard := false
+	for i, segment := range segments {
+		literals[i] = segment.Value
+		wildcard = wildcard || segment.Wildcard
+	}
+	if wildcard {
 		return resolvePaths(values, segments)
 	}
-	if mapTarget(values, segments) {
-		expanded := resolvePaths(values, append(append([]string{}, segments...), "*"))
+	if mapTarget(values, literals) {
+		expanded := resolvePaths(values, append(append([]PathSegment{}, segments...), PathSegment{Value: "*", Wildcard: true}))
 		if len(expanded) == 0 {
-			return [][]string{segments}
+			return [][]string{literals}
 		}
 		return expanded
 	}
-	return [][]string{segments}
+	return [][]string{literals}
 }
 
-func resolvePaths(values []map[string]any, segments []string) [][]string {
+func resolvePaths(values []map[string]any, segments []PathSegment) [][]string {
 	expanded := expandSegments(values, segments, []string{})
 	unique := map[string]struct{}{}
 	out := make([][]string, 0, len(expanded))
 	for _, segs := range expanded {
-		key := strings.Join(segs, ".")
+		key := JoinPath(segs)
 		if _, ok := unique[key]; ok {
 			continue
 		}
@@ -51,12 +61,12 @@ func resolvePaths(values []map[string]any, segments []string) [][]string {
 		out = append(out, segs)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return strings.Join(out[i], ".") < strings.Join(out[j], ".")
+		return JoinPath(out[i]) < JoinPath(out[j])
 	})
 	return out
 }
 
-func expandSegments(values []map[string]any, segments []string, acc []string) [][]string {
+func expandSegments(values []map[string]any, segments []PathSegment, acc []string) [][]string {
 	if len(segments) == 0 {
 		return [][]string{acc}
 	}
@@ -64,15 +74,15 @@ func expandSegments(values []map[string]any, segments []string, acc []string) []
 	head := segments[0]
 	rest := segments[1:]
 
-	if head == "*" {
+	if head.Wildcard {
 		keys := collectKeys(values, acc)
 		out := [][]string{}
 		for _, key := range keys {
-			out = append(out, expandSegments(values, rest, append(acc, key))...)
+			out = append(out, expandSegments(values, rest, append(append([]string{}, acc...), key))...)
 		}
 		return out
 	}
-	return expandSegments(values, rest, append(acc, head))
+	return expandSegments(values, rest, append(append([]string{}, acc...), head.Value))
 }
 
 func collectKeys(values []map[string]any, acc []string) []string {

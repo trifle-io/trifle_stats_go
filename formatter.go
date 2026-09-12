@@ -1,7 +1,6 @@
 package triflestats
 
 import (
-	"strings"
 	"time"
 )
 
@@ -24,8 +23,8 @@ func (s Series) FormatTimeline(path string, slices int, transform TimelineTransf
 		return map[string]any{}
 	}
 
-	segments := SplitPath(path)
-	resolved := ResolveConcretePaths(s.Values, segments)
+	segments := ParsePath(path)
+	resolved := ResolveSelectorPaths(s.Values, segments)
 	zipped := zipSeries(s)
 
 	result := map[string]any{}
@@ -60,8 +59,8 @@ func (s Series) FormatCategory(path string, slices int, transform CategoryTransf
 		return map[string]any{}
 	}
 
-	segments := SplitPath(path)
-	resolved := ResolveConcretePaths(values, segments)
+	segments := ParsePath(path)
+	resolved := ResolveSelectorPaths(values, segments)
 	groups := sliceValues(toAnySlice(values), slices)
 
 	aggregated := make([]map[string]float64, 0, len(groups))
@@ -125,7 +124,7 @@ func aggregateCategorySlice(values []map[string]any, paths [][]string, transform
 }
 
 func joinSegments(parts []string) string {
-	return strings.Join(parts, ".")
+	return JoinPath(parts)
 }
 
 func toAnySlice(values []map[string]any) []any {

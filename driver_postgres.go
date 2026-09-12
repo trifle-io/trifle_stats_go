@@ -329,7 +329,7 @@ func (d *PostgresDriver) buildUpsertQuery(ident identifier, packed map[string]an
 			}
 			path := escapePostgresString(field)
 			expression = fmt.Sprintf(
-				"jsonb_set(%s, '{%s}', (COALESCE(%s.data->>'%s', '0')::numeric + %s)::text::jsonb)",
+				"jsonb_set(%s, ARRAY['%s'], (COALESCE(%s.data->>'%s', '0')::numeric + %s)::text::jsonb)",
 				expression, path, d.TableName, path, strconv.FormatFloat(delta, 'f', -1, 64),
 			)
 		}
@@ -341,7 +341,7 @@ func (d *PostgresDriver) buildUpsertQuery(ident identifier, packed map[string]an
 			}
 			args = append(args, string(encoded))
 			expression = fmt.Sprintf(
-				"jsonb_set(%s, '{%s}', $%d::jsonb)",
+				"jsonb_set(%s, ARRAY['%s'], $%d::jsonb)",
 				expression, escapePostgresString(field), len(args),
 			)
 		}
